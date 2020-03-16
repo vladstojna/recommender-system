@@ -54,6 +54,7 @@ void mat2d_random_fill(mat2d* mat, double norm) {
 			mat2d_set(mat, i, j, RAND01 / (double) norm);
 }
 
+// VERY naive implementation
 void mat2d_prod(mat2d* left, mat2d* right, mat2d* dest) {
 	if (left->n_c != right->n_r)
 		die("The given matrices can't be multiplied with each other.\n");
