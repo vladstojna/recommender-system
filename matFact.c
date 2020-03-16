@@ -58,14 +58,14 @@ int main(int argc, char **argv) {
 	mat2d_print(L);
 	mat2d_print(R);
 
+	mat2d* L_aux = mat2d_new(users, features);
+	mat2d_copy(L, L_aux);
+	mat2d_print(L_aux);
+
 	mat2d_free(A);
 	mat2d_free(L);
+	mat2d_free(L_aux);
 	mat2d_free(R);
-
-	// mat2d* L_aux = mat2d_new(users, features);
-	// mat2d_copy(L, L_aux);
-	// mat2d* R_aux = mat2d_new(features, items);
-	// mat2d_copy(R, R_aux);
 
 	return 0;
 }

@@ -32,7 +32,7 @@ void mat2d_free(mat2d* mat) {
 }
 
 void mat2d_copy(mat2d* from, mat2d* to) {
-	memcpy(from->data, to->data, sizeof(double) * to->n_r * to->n_c);
+	memcpy(to->data, from->data, sizeof(double) * to->n_r * to->n_c);
 }
 
 void mat2d_print(mat2d* mat) {
