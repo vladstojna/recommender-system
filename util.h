@@ -6,10 +6,10 @@
 // Print error message and kill program
 void die(const char* error);
 
-// Parse int from string str
-int parse_int(FILE* str);
+// Parse int from file
+int parse_int(FILE* fp);
 
-// Parse double from string str
-double parse_double(FILE* str);
+// Parse double from file
+double parse_double(FILE* fp);
 
 #endif

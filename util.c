@@ -8,10 +8,10 @@ void die(const char* error) {
 	exit(-1);
 }
 
-int parse_int(FILE* file) {
+int parse_int(FILE* fp) {
 	int value;
 
-	if (fscanf(file, "%d", &value) != 1) {
+	if (fscanf(fp, "%d", &value) != 1) {
 		fprintf(stderr, "Error in int argument.\n");
 		exit(-1);
 	}
@@ -19,10 +19,10 @@ int parse_int(FILE* file) {
 	return value;
 }
 
-double parse_double(FILE* file) {
+double parse_double(FILE* fp) {
 	double value;
 
-	if (fscanf(file, "%lf", &value) != 1) {
+	if (fscanf(fp, "%lf", &value) != 1) {
 		fprintf(stderr, "Error in double argument.\n");
 		exit(-1);
 	}
