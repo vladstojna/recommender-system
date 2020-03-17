@@ -11,17 +11,13 @@ mat2d* mat2d_new(int rows, int columns) {
 	if (mat) {
 		mat->n_r = rows;
 		mat->n_c = columns;
-		mat->data = (double*) malloc(sizeof(double) * rows * columns);
+		mat->data = (double*) calloc(rows * columns, sizeof(double));
 
 		if (!mat->data) {
 			free(mat);
 			return 0;
 		}
 	}
-
-	for (int i = 0; i < mat->n_r; i++)
-		for (int j = 0; j < mat->n_c; j++)
-			mat2d_set(mat, i, j, 0);
 
 	return mat;
 }
