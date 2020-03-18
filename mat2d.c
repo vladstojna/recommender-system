@@ -42,12 +42,16 @@ void mat2d_print(mat2d* mat) {
 	}
 }
 
-void mat2d_random_fill(mat2d* mat, double norm) {
+void mat2d_random_fill_LR(mat2d* L, mat2d* R, double norm) {
 	srandom(0);
 
-	for (int i = 0; i < mat->n_r; i++)
-		for (int j = 0; j < mat->n_c; j++)
-			mat2d_set(mat, i, j, RAND01 / (double) norm);
+	for (int i = 0; i < L->n_r; i++)
+		for (int j = 0; j < L->n_c; j++)
+			mat2d_set(L, i, j, RAND01 / (double) norm);
+
+	for (int i = 0; i < R->n_r; i++)
+		for (int j = 0; j < R->n_c; j++)
+			mat2d_set(R, i, j, RAND01 / (double) norm);
 }
 
 // VERY naive implementation
