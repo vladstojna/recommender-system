@@ -50,7 +50,7 @@ int main(int argc, char **argv) {
 
 	// Creating L and R matrices and their auxiliaries
 	mat2d* L = mat2d_new(users, features);
-	mat2d* R = mat2d_new(items, features);
+	mat2d* R = mat2d_new(features, items);
 	mat2d_random_fill_LR(L, R, features);
 
 	mat2d_print(A);

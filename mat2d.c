@@ -50,21 +50,21 @@ void mat2d_random_fill_LR(mat2d* L, mat2d* R, double norm) {
 		for (j = 0; j < L->n_c; j++)
 			mat2d_set(L, i, j, RAND01 / (double) norm);
 
-	for (i = 0; i < R->n_c; i++)
-		for (j = 0; j < R->n_r; j++)
-			mat2d_set(R, j, i, RAND01 / (double) norm);
+	for (i = 0; i < R->n_r; i++)
+		for (j = 0; j < R->n_c; j++)
+			mat2d_set(R, i, j, RAND01 / (double) norm);
 }
 
-// Right side matrix must be transposed
+// Naive matrix multiplication
 void mat2d_prod(mat2d* left, mat2d* right, mat2d* dest) {
-	if (left->n_c != right->n_c)
+	if (left->n_c != right->n_r)
 		die("The given matrices can't be multiplied with each other.\n");
 
 	double res = 0;
 	for (int i = 0; i < left->n_r; i++) {
-		for (int j = 0; j < right->n_r; j++) {
+		for (int j = 0; j < right->n_c; j++) {
 			for (int k = 0; k < left->n_c; k++) {
-				res += mat2d_get(left, i, k) * mat2d_get(right, j, k);
+				res += mat2d_get(left, i, k) * mat2d_get(right, k, j);
 			}
 
 			mat2d_set(dest, i, j, res);
