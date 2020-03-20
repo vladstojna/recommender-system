@@ -60,15 +60,11 @@ void mat2d_prod(mat2d* left, mat2d* right, mat2d* dest) {
 	if (left->n_c != right->n_r)
 		die("The given matrices can't be multiplied with each other.\n");
 
-	double res = 0;
 	for (int i = 0; i < left->n_r; i++) {
 		for (int j = 0; j < right->n_c; j++) {
 			for (int k = 0; k < left->n_c; k++) {
-				res += mat2d_get(left, i, k) * mat2d_get(right, k, j);
+				mat2d_set(dest, i, j, mat2d_get(dest, i, j) + mat2d_get(left, i, k) * mat2d_get(right, k, j));
 			}
-
-			mat2d_set(dest, i, j, res);
-			res = 0;
 		}
 	}
 }
