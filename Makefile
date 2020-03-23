@@ -13,7 +13,7 @@ default: serial
 serial: matFact.o mat2d.o util.o
 	$(CC) $(CFLAGS) -o $(OUT) matFact.o mat2d.o util.o
 
-serial-opt: matFact.o mat2.o util.o
+serial-opt: matFact.o mat2d.o util.o
 	$(CC) $(CFLAGS) $(OPT) -o $(OUT) matFact.o mat2d.o util.o
 
 omp: matFact-omp.o
