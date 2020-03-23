@@ -9,11 +9,11 @@ typedef struct {
 	int row;
 	int col;
 	double value;
-} info;
+} non_zero_entry;
 
 int col_cmp(const void * a, const void * b) {
-	info i_a = *(info*)a;
-	info i_b = *(info*)b;
+	non_zero_entry i_a = *(non_zero_entry*)a;
+	non_zero_entry i_b = *(non_zero_entry*)b;
 
 	if (i_a.col != i_b.col)
 		return i_a.col - i_b.col;
@@ -26,11 +26,11 @@ int main(int argc, char **argv) {
 		die("Missing input file name.");
 	}
 
-	const char* file_name = argv[1];
+	const char *file_name = argv[1];
 	FILE *fp = fopen(file_name, "r");
 
 	if (fp == NULL)
-		die("Unable to open input file.\n");
+		die("Unable to open input file.");
 
 	// Reading number of iterations
 	int iters = parse_int(fp);
@@ -48,8 +48,9 @@ int main(int argc, char **argv) {
 	int items = parse_int(fp);
 	int non_zero = parse_int(fp);
 
-	info row_major[non_zero];
-	info col_major[non_zero];
+	// non_zero_entry entries[non_zero];
+	non_zero_entry user_major[non_zero];
+	non_zero_entry item_major[non_zero];
 
 	// Reading input matrix A
 	for (int i = 0; i < non_zero; i++) {
@@ -57,71 +58,68 @@ int main(int argc, char **argv) {
 		int column = parse_int(fp);
 		double value = parse_double(fp);
 
-		info in = { row, column, value };
-		row_major[i] = in;
-		col_major[i] = in;
+		non_zero_entry in = { row, column, value };
+		user_major[i] = in;
+		item_major[i] = in;
+		// entries[i] = in;
 	}
 
-	qsort((void*)col_major, non_zero, sizeof(info), col_cmp);
+	// Order item_major by items over users
+	qsort((void*)item_major, non_zero, sizeof(non_zero_entry), col_cmp);
 
 	if (fclose(fp) == EOF) {
-		die("Unable to close input file.\n");
+		die("Unable to close input file.");
 	}
 
 	// Creating L and R matrices and their auxiliaries
-	mat2d* L = mat2d_new(users, features);
-	mat2d* R_init = mat2d_new(features, items);
+	mat2d *L = mat2d_new(users, features);
+	mat2d *R_init = mat2d_new(features, items);
 	mat2d_random_fill_LR(L, R_init, features);
 
-	mat2d* R = mat2d_transpose(R_init);
+	// R is always assumed transposed
+	mat2d *R = mat2d_new(items, features);
+	mat2d_transpose(R_init, R);
 	mat2d_free(R_init);
 
-	mat2d* L_aux = mat2d_new(users, features);
-	mat2d* R_aux = mat2d_new(items, features);
+	mat2d *L_aux = mat2d_new(users, features);
+	mat2d *R_aux = mat2d_new(items, features);
 	mat2d_copy(L, L_aux);
 	mat2d_copy(R, R_aux);
 
-	mat2d* B = mat2d_new(users, items);
+	mat2d *B = mat2d_new(users, items);
 	mat2d_prod(L, R, B);
 
 	for (int iter = 0; iter < iters; iter++) {
 
-		for (int i = 0; i < non_zero;) {
-			int curr_row = row_major[i].row;
+		int prev_i = -1;
+		int prev_j = -1;
 
-			int skip;
-			for (int k = 0; k < L->n_c; k++) {
+		for (int idx = 0; idx < non_zero; idx++) {
+			int L_i = user_major[idx].row;
+			int L_j = user_major[idx].col;
 
-				double sum = 0;
-				skip = i;
-				while (skip < non_zero && row_major[skip].row == curr_row) {
-					sum += (row_major[skip].value - mat2d_get(B, row_major[skip].row, row_major[skip].col)) * (-mat2d_get(R_aux, row_major[skip].col, k));
+			int R_i = item_major[idx].row;
+			int R_j = item_major[idx].col;
 
-					skip++;
-				}
+			if (L_i != prev_i)
+				mat2d_set_line(L, L_i, mat2d_get_line(L_aux, L_i));
 
-				mat2d_set(L, row_major[i].row, k, mat2d_get(L_aux, row_major[i].row, k) - alpha * 2 * sum);
+			if (R_j != prev_j)
+				mat2d_set_line(R, R_j, mat2d_get_line(R_aux, R_j));
+
+			double L_value = user_major[idx].value;
+			double R_value = item_major[idx].value;
+
+			for (int k = 0; k < features; k++) {
+				mat2d_set(L, L_i, k, mat2d_get(L, L_i, k) - alpha * 2 * 
+				(L_value - mat2d_get(B, L_i, L_j)) * (-mat2d_get(R_aux, L_j, k)));
+
+				mat2d_set(R, R_j, k, mat2d_get(R, R_j, k) - alpha * 2 * 
+				(R_value - mat2d_get(B, R_i, R_j)) * (-mat2d_get(L_aux, R_i, k)));
 			}
-			i = skip;
-		}
 
-		for (int j = 0; j < non_zero;) {
-			int curr_col = col_major[j].col;
-
-			int skip;
-			for (int k = 0; k < R->n_c; k++) {
-
-				double sum = 0;
-				skip = j;
-				while (skip < non_zero && col_major[skip].col == curr_col) {
-					sum += (col_major[skip].value - mat2d_get(B, col_major[skip].row, col_major[skip].	col)) * (-mat2d_get(L_aux, col_major[skip].row, k));
-
-					skip++;
-				}
-
-				mat2d_set(R, col_major[j].col, k, mat2d_get(R_aux, col_major[j].col, k) - alpha * 2 * sum);
-			}
-			j = skip;
+			prev_i = L_i;
+			prev_j = R_j;
 		}
 
 		mat2d *tmp = L_aux;

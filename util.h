@@ -4,12 +4,12 @@
 #include <stdio.h>
 
 // Print error message and kill program
-void die(const char* error);
+void die(const char *error);
 
 // Parse int from file
-int parse_int(FILE* fp);
+int parse_int(FILE *fp);
 
 // Parse double from file
-double parse_double(FILE* fp);
+double parse_double(FILE *fp);
 
 #endif

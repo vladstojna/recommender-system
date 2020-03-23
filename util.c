@@ -3,12 +3,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-void die(const char* error) {
+void die(const char *error) {
 	fprintf(stderr, "Error: %s\n", error);
 	exit(-1);
 }
 
-int parse_int(FILE* fp) {
+int parse_int(FILE *fp) {
 	int value;
 
 	if (fscanf(fp, "%d", &value) != 1) {
@@ -18,7 +18,7 @@ int parse_int(FILE* fp) {
 	return value;
 }
 
-double parse_double(FILE* fp) {
+double parse_double(FILE *fp) {
 	double value;
 
 	if (fscanf(fp, "%lf", &value) != 1) {

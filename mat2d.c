@@ -11,7 +11,7 @@ mat2d* mat2d_new(int rows, int columns) {
 	if (mat) {
 		mat->n_r = rows;
 		mat->n_c = columns;
-		mat->data = (double*) calloc(rows * columns, sizeof(double));
+		mat->data = (double *)calloc(rows * columns, sizeof(double));
 
 		if (!mat->data) {
 			free(mat);
@@ -22,16 +22,24 @@ mat2d* mat2d_new(int rows, int columns) {
 	return mat;
 }
 
-void mat2d_free(mat2d* mat) {
+void mat2d_free(mat2d *mat) {
 	free(mat->data);
 	free(mat);
 }
 
-void mat2d_copy(mat2d* from, mat2d* to) {
+double *mat2d_get_line(mat2d *mat, int line) {
+	return &(mat->data[line * mat->n_c]);
+}
+
+void mat2d_set_line(mat2d *mat, int line, double *values) {
+	memcpy(&(mat->data[line * mat->n_c]), values, mat->n_c * sizeof(double));
+}
+
+void mat2d_copy(mat2d *from, mat2d *to) {
 	memcpy(to->data, from->data, sizeof(double) * to->n_r * to->n_c);
 }
 
-void mat2d_print(mat2d* mat) {
+void mat2d_print(mat2d *mat) {
 	printf("\n");
 
 	for (int i = 0; i < mat->n_r; i++) {
@@ -42,7 +50,7 @@ void mat2d_print(mat2d* mat) {
 	}
 }
 
-void mat2d_random_fill_LR(mat2d* L, mat2d* R, double norm) {
+void mat2d_random_fill_LR(mat2d *L, mat2d *R, double norm) {
 	srandom(0);
 
 	int i, j;
@@ -56,9 +64,9 @@ void mat2d_random_fill_LR(mat2d* L, mat2d* R, double norm) {
 }
 
 // Assumes R is transposed
-void mat2d_prod(mat2d* left, mat2d* right, mat2d* dest) {
+void mat2d_prod(mat2d *left, mat2d *right, mat2d *dest) {
 	if (left->n_c != right->n_c)
-		die("The given matrices can't be multiplied with each other.\n");
+		die("The given matrices can't be multiplied with each other.");
 
 	for (int i = 0; i < left->n_r; i++) {
 		for (int j = 0; j < right->n_r; j++) {
@@ -71,14 +79,13 @@ void mat2d_prod(mat2d* left, mat2d* right, mat2d* dest) {
 	}
 }
 
-mat2d *mat2d_transpose(mat2d* orig) {
-	mat2d *transpose = mat2d_new(orig->n_c, orig->n_r);
+void mat2d_transpose(mat2d *orig, mat2d *transpose) {
+	if (orig->n_r != transpose->n_c || orig->n_c != transpose->n_r)
+		die("Can't transpose into desired matrix.");
 
 	for (int i = 0; i < orig->n_r; i++) {
 		for (int j = 0; j < orig->n_c; j++) {
 			mat2d_set(transpose, j, i, mat2d_get(orig, i, j));
 		}
 	}
-
-	return transpose;
 }
