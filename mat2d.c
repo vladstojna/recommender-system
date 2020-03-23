@@ -89,3 +89,19 @@ void mat2d_transpose(mat2d *orig, mat2d *transpose) {
 		}
 	}
 }
+
+// Assumes right matrix is transposed
+double mat2d_dot_product(mat2d *left, int r, mat2d *right, int c) {
+	if (left->n_c != right->n_c) {
+		die("Cannot calculate dot product: invalid sizes.");
+	}
+
+	double *row = mat2d_get_line(left, r);
+	double *col = mat2d_get_line(right, c);
+	double result = 0;
+
+	for (int i = 0; i < left->n_c; ++i) {
+		result += row[i] * col[i];
+	}
+	return result;
+}

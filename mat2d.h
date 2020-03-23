@@ -18,6 +18,7 @@ void mat2d_print(mat2d *mat);
 void mat2d_random_fill_LR(mat2d *L, mat2d *R, double norm);
 void mat2d_prod(mat2d *left, mat2d *right, mat2d *dest);
 void mat2d_transpose(mat2d *orig, mat2d *transpose);
+double mat2d_dot_product(mat2d *left, int r, mat2d *right, int c);
 
 #define mat2d_get(m, r, c) m->data[((r)*m->n_c)+(c)]
 #define mat2d_set(m, r, c, v) m->data[((r)*m->n_c)+(c)]=v

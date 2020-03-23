@@ -87,7 +87,6 @@ int main(int argc, char **argv) {
 	mat2d_copy(R, R_aux);
 
 	mat2d *B = mat2d_new(users, items);
-	mat2d_prod(L, R, B);
 
 	for (int iter = 0; iter < iters; iter++) {
 
@@ -110,12 +109,16 @@ int main(int argc, char **argv) {
 			double L_value = user_major[idx].value;
 			double R_value = item_major[idx].value;
 
+			double B_ij_L = mat2d_dot_product(L_aux, L_i, R_aux, L_j);
+			double B_ij_R = (R_i == L_i && R_j == L_j) ?
+				B_ij_L : mat2d_dot_product(L_aux, R_i, R_aux, R_j);
+
 			for (int k = 0; k < features; k++) {
 				mat2d_set(L, L_i, k, mat2d_get(L, L_i, k) - alpha * 2 * 
-				(L_value - mat2d_get(B, L_i, L_j)) * (-mat2d_get(R_aux, L_j, k)));
+				(L_value - B_ij_L) * (-mat2d_get(R_aux, L_j, k)));
 
 				mat2d_set(R, R_j, k, mat2d_get(R, R_j, k) - alpha * 2 * 
-				(R_value - mat2d_get(B, R_i, R_j)) * (-mat2d_get(L_aux, R_i, k)));
+				(R_value - B_ij_R) * (-mat2d_get(L_aux, R_i, k)));
 			}
 
 			prev_i = L_i;
@@ -129,9 +132,9 @@ int main(int argc, char **argv) {
 		tmp = R_aux;
 		R_aux = R;
 		R = tmp;
-
-		mat2d_prod(L_aux, R_aux, B);
 	}
+
+	mat2d_prod(L, R, B);
 
 	mat2d_print(L_aux);
 	mat2d_print(R_aux);
