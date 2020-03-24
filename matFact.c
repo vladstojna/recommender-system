@@ -1,27 +1,37 @@
 // serial implementation
 #include "util.h"
 #include "mat2d.h"
+#include "benchmark.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
+#include <memory.h>
 
-typedef struct {
+//__init_benchmark;
+
+typedef struct
+{
 	int row;
 	int col;
 	double value;
 } non_zero_entry;
 
-int col_cmp(const void * a, const void * b) {
-	non_zero_entry i_a = *(non_zero_entry*)a;
-	non_zero_entry i_b = *(non_zero_entry*)b;
+int col_cmp(const void *a, const void *b)
+{
+	non_zero_entry i_a = *(non_zero_entry *)a;
+	non_zero_entry i_b = *(non_zero_entry *)b;
 
 	if (i_a.col != i_b.col)
 		return i_a.col - i_b.col;
-	else return i_a.row - i_b.row;
+	else
+		return i_a.row - i_b.row;
 }
 
-int main(int argc, char **argv) {
-	if (argc != 2) {
+int main(int argc, char **argv)
+{
+	if (argc != 2)
+	{
 		fprintf(stderr, "Run ./matFact.out file");
 		die("Missing input file name.");
 	}
@@ -53,21 +63,23 @@ int main(int argc, char **argv) {
 	non_zero_entry item_major[non_zero];
 
 	// Reading input matrix A
-	for (int i = 0; i < non_zero; i++) {
+	for (int i = 0; i < non_zero; i++)
+	{
 		int row = parse_int(fp);
 		int column = parse_int(fp);
 		double value = parse_double(fp);
 
-		non_zero_entry in = { row, column, value };
+		non_zero_entry in = {row, column, value};
 		user_major[i] = in;
 		item_major[i] = in;
 		// entries[i] = in;
 	}
 
 	// Order item_major by items over users
-	qsort((void*)item_major, non_zero, sizeof(non_zero_entry), col_cmp);
+	qsort((void *)item_major, non_zero, sizeof(non_zero_entry), col_cmp);
 
-	if (fclose(fp) == EOF) {
+	if (fclose(fp) == EOF)
+	{
 		die("Unable to close input file.");
 	}
 
@@ -87,13 +99,22 @@ int main(int argc, char **argv) {
 	mat2d_copy(R, R_aux);
 
 	mat2d *B = mat2d_new(users, items);
+#define DP
 
-	for (int iter = 0; iter < iters; iter++) {
+#ifdef DP
+	mat2d *dots = mat2d_new(users, items);
+	bool *was_calc = (bool *)calloc(users * items, sizeof(bool));
+#endif
+
+	//__start_benchmark;
+	for (int iter = 0; iter < iters; iter++)
+	{
 
 		int prev_i = -1;
 		int prev_j = -1;
 
-		for (int idx = 0; idx < non_zero; idx++) {
+		for (int idx = 0; idx < non_zero; idx++)
+		{
 			int L_i = user_major[idx].row;
 			int L_j = user_major[idx].col;
 
@@ -109,16 +130,47 @@ int main(int argc, char **argv) {
 			double L_value = user_major[idx].value;
 			double R_value = item_major[idx].value;
 
+#ifndef DP
 			double B_ij_L = mat2d_dot_product(L_aux, L_i, R_aux, L_j);
-			double B_ij_R = (R_i == L_i && R_j == L_j) ?
-				B_ij_L : mat2d_dot_product(L_aux, R_i, R_aux, R_j);
+			double B_ij_R = (R_i == L_i && R_j == L_j) ? B_ij_L : mat2d_dot_product(L_aux, R_i, R_aux, R_j);
+#endif
 
-			for (int k = 0; k < features; k++) {
-				mat2d_set(L, L_i, k, mat2d_get(L, L_i, k) - alpha * 2 * 
-				(L_value - B_ij_L) * (-mat2d_get(R_aux, L_j, k)));
+#ifdef DP
+			double B_ij_L;
+			double B_ij_R;
 
-				mat2d_set(R, R_j, k, mat2d_get(R, R_j, k) - alpha * 2 * 
-				(R_value - B_ij_R) * (-mat2d_get(L_aux, R_i, k)));
+			if (ptr2d_get(was_calc, L_i, L_j, items))
+			{
+				B_ij_L = mat2d_get(dots, L_i, L_j);
+			}
+			else
+			{
+				B_ij_L = mat2d_dot_product(L_aux, L_i, R_aux, L_j);
+				ptr2d_set(was_calc, L_i, L_j, items, true);
+				mat2d_set(dots, L_i, L_j, B_ij_L);
+			}
+
+			if (R_i == L_i && R_j == L_j)
+			{
+				B_ij_R = B_ij_L;
+			}
+			else if (ptr2d_get(was_calc, R_i, R_j, items))
+			{
+				B_ij_R = mat2d_get(dots, R_i, R_j);
+			}
+			else
+			{
+				B_ij_R = mat2d_dot_product(L_aux, R_i, R_aux, R_j);
+				ptr2d_set(was_calc, R_i, R_j, items, true);
+				mat2d_set(dots, R_i, R_j, B_ij_R);
+			}
+#endif
+
+			for (int k = 0; k < features; k++)
+			{
+				mat2d_set(L, L_i, k, mat2d_get(L, L_i, k) - alpha * 2 * (L_value - B_ij_L) * (-mat2d_get(R_aux, L_j, k)));
+
+				mat2d_set(R, R_j, k, mat2d_get(R, R_j, k) - alpha * 2 * (R_value - B_ij_R) * (-mat2d_get(L_aux, R_i, k)));
 			}
 
 			prev_i = L_i;
@@ -132,6 +184,10 @@ int main(int argc, char **argv) {
 		tmp = R_aux;
 		R_aux = R;
 		R = tmp;
+
+#ifdef DP
+		memset(was_calc, false, sizeof(bool) * users * items);
+#endif
 	}
 
 	mat2d_prod(L, R, B);
@@ -140,11 +196,17 @@ int main(int argc, char **argv) {
 	mat2d_print(R_aux);
 	mat2d_print(B);
 
+	//__end_benchmark("oof", 1);
+
 	mat2d_free(L_aux);
 	mat2d_free(R_aux);
 	mat2d_free(B);
 	mat2d_free(L);
 	mat2d_free(R);
+#ifdef DP
+	mat2d_free(dots);
+	free(was_calc);
+#endif
 
 	return 0;
 }

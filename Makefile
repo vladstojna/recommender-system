@@ -2,8 +2,8 @@
 CC = gcc
 
 # compiler flags
-CFLAGS = -Wall -Wextra -g
-OPT = -O3
+CFLAGS = -Wall -Wextra
+OPT = -O2
 
 # output name
 OUT = matFact.out

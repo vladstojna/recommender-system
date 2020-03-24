@@ -105,3 +105,4 @@ double mat2d_dot_product(mat2d *left, int r, mat2d *right, int c) {
 	}
 	return result;
 }
+
