@@ -11,7 +11,7 @@ mat2d* mat2d_new(int rows, int columns) {
 	if (mat) {
 		mat->n_r = rows;
 		mat->n_c = columns;
-		mat->data = (double *)calloc(rows * columns, sizeof(double));
+		mat->data = malloc(rows * columns * sizeof(double));
 
 		if (!mat->data) {
 			free(mat);

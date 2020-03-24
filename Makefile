@@ -10,11 +10,11 @@ OUT = matFact.out
 
 default: serial
 
-serial: matFact.o mat2d.o util.o
-	$(CC) $(CFLAGS) -o $(OUT) matFact.o mat2d.o util.o
+serial: matFact.o mat2d.o util.o adjlst.o
+	$(CC) $(CFLAGS) -o $(OUT) matFact.o mat2d.o util.o adjlst.o
 
-serial-opt: matFact.o mat2d.o util.o
-	$(CC) $(CFLAGS) $(OPT) -o $(OUT) matFact.o mat2d.o util.o
+serial-opt: matFact.o mat2d.o util.o adjlst.o
+	$(CC) $(CFLAGS) $(OPT) -o $(OUT) matFact.o mat2d.o util.o adjlst.o
 
 omp: matFact-omp.o
 	$(CC) $(CFLAGS) -o $(OUT) matFact-omp.o
@@ -30,6 +30,9 @@ matFact-omp.o: matFact-omp.c
 
 mat2d.o: mat2d.c mat2d.h util.h
 	$(CC) $(CFLAGS) -c mat2d.c
+
+adjlst.o: adjlst.c adjlst.h
+	$(CC) $(CFLAGS) -c adjlst.c
 
 util.o: util.c util.h
 	$(CC) $(CFLAGS) -c util.c
