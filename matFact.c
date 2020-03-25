@@ -1,6 +1,7 @@
 // serial implementation
 #include "util.h"
 #include "mat2d.h"
+#include "adjlst.h"
 #include "benchmark.h"
 
 #include <stdio.h>
@@ -16,17 +17,6 @@ typedef struct
 	int col;
 	double value;
 } non_zero_entry;
-
-int col_cmp(const void *a, const void *b)
-{
-	non_zero_entry i_a = *(non_zero_entry *)a;
-	non_zero_entry i_b = *(non_zero_entry *)b;
-
-	if (i_a.col != i_b.col)
-		return i_a.col - i_b.col;
-	else
-		return i_a.row - i_b.row;
-}
 
 int main(int argc, char **argv)
 {
@@ -61,23 +51,41 @@ int main(int argc, char **argv)
 	parse_three_ints(fp, &users, &items, &non_zero);
 
 	// non_zero_entry entries[non_zero];
-	non_zero_entry user_major[non_zero];
-	non_zero_entry item_major[non_zero];
+	non_zero_entry *entries = (non_zero_entry *)malloc(sizeof(non_zero_entry) * non_zero);
 
 	// Reading input matrix A
-	for (int i = 0; i < non_zero; i++)
-	{
+	adj_lst *A = adjlst_new(users);
+
+	int prev_row = -1;
+	int col_count = 0;
+	// Reading input matrix A
+	for (int i = 0; i < non_zero; i++, col_count++) {
 		int row, column;
 		double value;
 		parse_non_zero_entry(fp, &row, &column, &value);
 
-		non_zero_entry in = {row, column, value};
-		user_major[i] = in;
-		item_major[i] = in;
+		if (i == 0)
+			prev_row = row;
+
+		if (row != prev_row) {
+			adjlst_entries_set(A, prev_row, adjlst_new_entries(col_count), col_count);
+			prev_row = row;
+			col_count = 0;
+		}
+
+		non_zero_entry in = { row, column, value };
+		entries[i] = in;
+	}
+	adjlst_entries_set(A, prev_row, adjlst_new_entries(col_count), col_count);
+
+	for (int i = 0, j = 0; i < non_zero; i++) {
+		adj_lst_entry *item = &A->columns[entries[i].row];
+		column_entry *entry = &item->entries[j++ % item->size];
+		entry->at = entries[i].col;
+		entry->value = entries[i].value;
 	}
 
-	// Order item_major by items over users
-	qsort((void *)item_major, non_zero, sizeof(non_zero_entry), col_cmp);
+	free(entries);
 
 	if (fclose(fp) == EOF)
 	{
@@ -100,83 +108,40 @@ int main(int argc, char **argv)
 	mat2d_copy(R, R_aux);
 
 	mat2d *B = mat2d_new(users, items);
-#define DP
 
-#ifdef DP
-	mat2d *dots = mat2d_new(users, items);
-	bool *was_calc = (bool *)calloc(users * items, sizeof(bool));
-#endif
+	bool *check_col = (bool *)calloc(items, sizeof(bool));
 
-	//__start_benchmark;
+	__init_benchmark;
+	__start_benchmark;
+
 	for (int iter = 0; iter < iters; iter++)
 	{
-
-		int prev_i = -1;
-		int prev_j = -1;
-
-		for (int idx = 0; idx < non_zero; idx++)
+		for (size_t idx = 0; idx < A->rows; idx++)
 		{
-			int L_i = user_major[idx].row;
-			int L_j = user_major[idx].col;
+			if (adjlst_entries_sz(A, idx) == 0)
+				continue;
 
-			int R_i = item_major[idx].row;
-			int R_j = item_major[idx].col;
+			mat2d_set_line(L, idx, mat2d_get_line(L_aux, idx));
 
-			if (L_i != prev_i)
-				mat2d_set_line(L, L_i, mat2d_get_line(L_aux, L_i));
+			for (size_t jdx = 0; jdx < adjlst_entries_sz(A, idx); jdx++) {
+				int j = A->columns[idx].entries[jdx].at;
 
-			if (R_j != prev_j)
-				mat2d_set_line(R, R_j, mat2d_get_line(R_aux, R_j));
+				if (check_col[j] == false) {
+					check_col[j] = true;
+					mat2d_set_line(R, j, mat2d_get_line(R_aux, j));
+				}
 
-			double L_value = user_major[idx].value;
-			double R_value = item_major[idx].value;
+				double dot = mat2d_dot_product(L_aux, idx, R_aux, j);
+				double value = adjlst_entries(A, idx)[jdx].value;
 
-#ifndef DP
-			double B_ij_L = mat2d_dot_product(L_aux, L_i, R_aux, L_j);
-			double B_ij_R = (R_i == L_i && R_j == L_j) ? B_ij_L : mat2d_dot_product(L_aux, R_i, R_aux, R_j);
-#endif
-
-#ifdef DP
-			double B_ij_L;
-			double B_ij_R;
-
-			if (ptr2d_get(was_calc, L_i, L_j, items))
-			{
-				B_ij_L = mat2d_get(dots, L_i, L_j);
+				for (int k = 0; k < features; k++) {
+					mat2d_set(L, idx, k, mat2d_get(L, idx, k) - alpha * 2 * (value - dot) * (-mat2d_get(R_aux, j, k)));
+					mat2d_set(R, j, k, mat2d_get(R, j, k) - alpha * 2 * (value - dot) * (-mat2d_get(L_aux, idx, k)));
+				}
 			}
-			else
-			{
-				B_ij_L = mat2d_dot_product(L_aux, L_i, R_aux, L_j);
-				ptr2d_set(was_calc, L_i, L_j, items, true);
-				mat2d_set(dots, L_i, L_j, B_ij_L);
-			}
-
-			if (R_i == L_i && R_j == L_j)
-			{
-				B_ij_R = B_ij_L;
-			}
-			else if (ptr2d_get(was_calc, R_i, R_j, items))
-			{
-				B_ij_R = mat2d_get(dots, R_i, R_j);
-			}
-			else
-			{
-				B_ij_R = mat2d_dot_product(L_aux, R_i, R_aux, R_j);
-				ptr2d_set(was_calc, R_i, R_j, items, true);
-				mat2d_set(dots, R_i, R_j, B_ij_R);
-			}
-#endif
-
-			for (int k = 0; k < features; k++)
-			{
-				mat2d_set(L, L_i, k, mat2d_get(L, L_i, k) - alpha * 2 * (L_value - B_ij_L) * (-mat2d_get(R_aux, L_j, k)));
-
-				mat2d_set(R, R_j, k, mat2d_get(R, R_j, k) - alpha * 2 * (R_value - B_ij_R) * (-mat2d_get(L_aux, R_i, k)));
-			}
-
-			prev_i = L_i;
-			prev_j = R_j;
 		}
+
+		memset(check_col, false, sizeof(bool) * items);
 
 		mat2d *tmp = L_aux;
 		L_aux = L;
@@ -185,11 +150,13 @@ int main(int argc, char **argv)
 		tmp = R_aux;
 		R_aux = R;
 		R = tmp;
-
-#ifdef DP
-		memset(was_calc, false, sizeof(bool) * users * items);
-#endif
 	}
+
+	__end_benchmark("main loop", 1e3);
+
+	free(check_col);
+
+	adjlst_free(A);
 
 	mat2d_prod(L, R, B);
 
@@ -197,17 +164,11 @@ int main(int argc, char **argv)
 	mat2d_print(R_aux);
 	mat2d_print(B);
 
-	//__end_benchmark("oof", 1);
-
 	mat2d_free(L_aux);
 	mat2d_free(R_aux);
 	mat2d_free(B);
 	mat2d_free(L);
 	mat2d_free(R);
-#ifdef DP
-	mat2d_free(dots);
-	free(was_calc);
-#endif
 
 	return 0;
 }
