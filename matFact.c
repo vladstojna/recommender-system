@@ -43,20 +43,22 @@ int main(int argc, char **argv)
 		die("Unable to open input file.");
 
 	// Reading number of iterations
-	int iters = parse_int(fp);
+	int iters;
+	parse_int(fp, &iters);
 
 	// Reading learning rate
-	double alpha = parse_double(fp);
+	double alpha;
+	parse_double(fp, &alpha);
 
 	// Reading number of features
-	int features = parse_int(fp);
+	int features;
+	parse_int(fp, &features);
 
 	// Reading number of rows, columns and non-zero values in input matrix
 	// users == rows
 	// items == columns
-	int users = parse_int(fp);
-	int items = parse_int(fp);
-	int non_zero = parse_int(fp);
+	int users, items, non_zero;
+	parse_three_ints(fp, &users, &items, &non_zero);
 
 	// non_zero_entry entries[non_zero];
 	non_zero_entry user_major[non_zero];
@@ -65,14 +67,13 @@ int main(int argc, char **argv)
 	// Reading input matrix A
 	for (int i = 0; i < non_zero; i++)
 	{
-		int row = parse_int(fp);
-		int column = parse_int(fp);
-		double value = parse_double(fp);
+		int row, column;
+		double value;
+		parse_non_zero_entry(fp, &row, &column, &value);
 
 		non_zero_entry in = {row, column, value};
 		user_major[i] = in;
 		item_major[i] = in;
-		// entries[i] = in;
 	}
 
 	// Order item_major by items over users

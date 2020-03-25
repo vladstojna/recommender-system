@@ -8,22 +8,26 @@ void die(const char *error) {
 	exit(-1);
 }
 
-int parse_int(FILE *fp) {
-	int value;
-
-	if (fscanf(fp, "%d", &value) != 1) {
+void parse_int(FILE *fp, int *i) {
+	if (fscanf(fp, "%d", i) != 1) {
 		die("Error in int argument.");
 	}
-
-	return value;
 }
 
-double parse_double(FILE *fp) {
-	double value;
-
-	if (fscanf(fp, "%lf", &value) != 1) {
+void parse_double(FILE *fp, double *d) {
+	if (fscanf(fp, "%lf", d) != 1) {
 		die("Error in double argument.");
 	}
+}
 
-	return value;
+void parse_three_ints(FILE *fp, int *a, int *b, int *c) {
+	if (fscanf(fp, "%d %d %d", a, b, c) != 3) {
+		die("Error in multiple int argument.");
+	}
+}
+
+void parse_non_zero_entry(FILE *fp, int *row, int *col, double *val) {
+	if (fscanf(fp, "%d %d %lf", row, col, val) != 3) {
+		die("Error in non-zero entry.");
+	}
 }
