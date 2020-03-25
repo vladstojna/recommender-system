@@ -158,7 +158,7 @@ int main(int argc, char **argv)
 
 	adjlst_free(A);
 
-	mat2d_prod(L, R, B);
+	mat2d_prod(L_aux, R_aux, B);
 
 	mat2d_print(L_aux);
 	mat2d_print(R_aux);
