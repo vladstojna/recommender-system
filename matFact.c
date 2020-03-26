@@ -6,10 +6,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
-#include <memory.h>
-
-//__init_benchmark;
 
 typedef struct
 {
@@ -50,42 +46,16 @@ int main(int argc, char **argv)
 	int users, items, non_zero;
 	parse_three_ints(fp, &users, &items, &non_zero);
 
-	// non_zero_entry entries[non_zero];
-	non_zero_entry *entries = (non_zero_entry *)malloc(sizeof(non_zero_entry) * non_zero);
+	non_zero_entry entries[non_zero];
 
-	// Reading input matrix A
-	adj_lst *A = adjlst_new(users);
-
-	int prev_row = -1;
-	int col_count = 0;
-	// Reading input matrix A
-	for (int i = 0; i < non_zero; i++, col_count++) {
+	for (int i = 0; i < non_zero; i++) {
 		int row, column;
 		double value;
 		parse_non_zero_entry(fp, &row, &column, &value);
 
-		if (i == 0)
-			prev_row = row;
-
-		if (row != prev_row) {
-			adjlst_entries_set(A, prev_row, adjlst_new_entries(col_count), col_count);
-			prev_row = row;
-			col_count = 0;
-		}
-
-		non_zero_entry in = { row, column, value };
-		entries[i] = in;
+		non_zero_entry entry = { row, column, value };
+		entries[i] = entry;
 	}
-	adjlst_entries_set(A, prev_row, adjlst_new_entries(col_count), col_count);
-
-	for (int i = 0, j = 0; i < non_zero; i++) {
-		adj_lst_entry *item = &A->columns[entries[i].row];
-		column_entry *entry = &item->entries[j++ % item->size];
-		entry->at = entries[i].col;
-		entry->value = entries[i].value;
-	}
-
-	free(entries);
 
 	if (fclose(fp) == EOF)
 	{
@@ -102,70 +72,63 @@ int main(int argc, char **argv)
 	mat2d_transpose(R_init, R);
 	mat2d_free(R_init);
 
-	mat2d *L_aux = mat2d_new(users, features);
-	mat2d *R_aux = mat2d_new(items, features);
-	mat2d_copy(L, L_aux);
-	mat2d_copy(R, R_aux);
+	mat2d *L_stable = mat2d_new(users, features);
+	mat2d *R_stable = mat2d_new(items, features);
+	mat2d_copy(L, L_stable);
+	mat2d_copy(R, R_stable);
 
 	mat2d *B = mat2d_new(users, items);
-
-	bool *check_col = (bool *)calloc(items, sizeof(bool));
 
 	__init_benchmark;
 	__start_benchmark;
 
 	for (int iter = 0; iter < iters; iter++)
 	{
-		for (size_t idx = 0; idx < A->rows; idx++)
+		mat2d_zero(L);
+		mat2d_zero(R);
+
+		for (int n = 0; n < non_zero; n++)
 		{
-			if (adjlst_entries_sz(A, idx) == 0)
-				continue;
+			int i = entries[n].row;
+			int j = entries[n].col;
+			double dot = mat2d_dot_product(L_stable, i, R_stable, j);
+			double value = entries[n].value;
 
-			mat2d_set_line(L, idx, mat2d_get_line(L_aux, idx));
-
-			for (size_t jdx = 0; jdx < adjlst_entries_sz(A, idx); jdx++) {
-				int j = A->columns[idx].entries[jdx].at;
-
-				if (check_col[j] == false) {
-					check_col[j] = true;
-					mat2d_set_line(R, j, mat2d_get_line(R_aux, j));
-				}
-
-				double dot = mat2d_dot_product(L_aux, idx, R_aux, j);
-				double value = adjlst_entries(A, idx)[jdx].value;
-
-				for (int k = 0; k < features; k++) {
-					mat2d_set(L, idx, k, mat2d_get(L, idx, k) - alpha * 2 * (value - dot) * (-mat2d_get(R_aux, j, k)));
-					mat2d_set(R, j, k, mat2d_get(R, j, k) - alpha * 2 * (value - dot) * (-mat2d_get(L_aux, idx, k)));
-				}
+			for (int k = 0; k < features; k++) {
+				mat2d_set(L, i, k, mat2d_get(L, i, k) + (value - dot) * 
+				(-mat2d_get(R_stable, j, k)));
+				mat2d_set(R, j, k, mat2d_get(R, j, k) + (value - dot) * 
+				(-mat2d_get(L_stable, i, k)));
 			}
 		}
 
-		memset(check_col, false, sizeof(bool) * items);
+		for (int r = 0; r < users; r++)
+			for (int c = 0; c < features; c++)
+				mat2d_set(L, r, c, mat2d_get(L_stable, r, c) - alpha * 2 * mat2d_get(L, r, c));
 
-		mat2d *tmp = L_aux;
-		L_aux = L;
+		for (int r = 0; r < items; r++)
+			for (int c = 0; c < features; c++)
+				mat2d_set(R, r, c, mat2d_get(R_stable, r, c) - alpha * 2 * mat2d_get(R, r, c));
+
+		mat2d *tmp = L_stable;
+		L_stable = L;
 		L = tmp;
 
-		tmp = R_aux;
-		R_aux = R;
+		tmp = R_stable;
+		R_stable = R;
 		R = tmp;
 	}
 
 	__end_benchmark("main loop", 1e3);
 
-	free(check_col);
+	mat2d_prod(L_stable, R_stable, B);
 
-	adjlst_free(A);
+	// mat2d_print(L_stable);
+	// mat2d_print(R_stable);
+	// mat2d_print(B);
 
-	mat2d_prod(L_aux, R_aux, B);
-
-	mat2d_print(L_aux);
-	mat2d_print(R_aux);
-	mat2d_print(B);
-
-	mat2d_free(L_aux);
-	mat2d_free(R_aux);
+	mat2d_free(L_stable);
+	mat2d_free(R_stable);
 	mat2d_free(B);
 	mat2d_free(L);
 	mat2d_free(R);

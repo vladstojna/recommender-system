@@ -63,6 +63,10 @@ void mat2d_random_fill_LR(mat2d *L, mat2d *R, double norm) {
 			mat2d_set(R, i, j, RAND01 / (double) norm);
 }
 
+void mat2d_zero(mat2d *mat) {
+	memset(mat->data, 0, mat->n_r * mat->n_c * sizeof(double));
+}
+
 // Assumes R is transposed
 void mat2d_prod(mat2d *left, mat2d *right, mat2d *dest) {
 	if (left->n_c != right->n_c)

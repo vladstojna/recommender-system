@@ -17,6 +17,7 @@ void mat2d_set_line(mat2d *mat, int line, double *value);
 void mat2d_copy(mat2d *from, mat2d *to);
 void mat2d_print(mat2d *mat);
 void mat2d_random_fill_LR(mat2d *L, mat2d *R, double norm);
+void mat2d_zero(mat2d *mat);
 void mat2d_prod(mat2d *left, mat2d *right, mat2d *dest);
 void mat2d_transpose(mat2d *orig, mat2d *transpose);
 double mat2d_dot_product(mat2d *left, int r, mat2d *right, int c);
