@@ -39,6 +39,9 @@
 *.x86_64
 *.hex
 
+# no sample outputs ignore
+!samples/*.out
+
 # Debug files
 *.dSYM/
 *.su
