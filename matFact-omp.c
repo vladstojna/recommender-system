@@ -49,6 +49,8 @@ void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries,
 
 	for (int iter = 0; iter < iters; iter++)
 	{
+
+		// Sections are better if workload is heavy
 		#pragma omp single
 		{
 			mat2d_zero(L);
@@ -65,11 +67,11 @@ void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries,
 
 			for (int k = 0; k < features; k++) {
 				#pragma omp atomic
-				mat2d_set(L, i, k, mat2d_get(L, i, k) + (value - dot) * 
+				mat2d_set(L, i, k, mat2d_get(L, i, k) + (value - dot) *
 				(-mat2d_get(R_stable, j, k)));
 
 				#pragma omp atomic
-				mat2d_set(R, j, k, mat2d_get(R, j, k) + (value - dot) * 
+				mat2d_set(R, j, k, mat2d_get(R, j, k) + (value - dot) *
 				(-mat2d_get(L_stable, i, k)));
 			}
 		}
@@ -92,9 +94,9 @@ void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries,
 		
 	}
 
-	}
-
 	mat2d_prod(L_stable, R_stable, B);
+
+	}
 
 	mat2d_free(L_stable);
 	mat2d_free(R_stable);
