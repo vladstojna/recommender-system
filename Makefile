@@ -2,8 +2,7 @@
 CC = gcc
 
 # compiler flags
-CFLAGS = -Wall -Wextra
-OPT = -O2
+CFLAGS = -Wall -Wextra -fopenmp
 
 # output name
 OUT = matFact.out
@@ -13,14 +12,8 @@ default: serial
 serial: matFact.o mat2d.o util.o adjlst.o
 	$(CC) $(CFLAGS) -o $(OUT) matFact.o mat2d.o util.o adjlst.o
 
-serial-opt: matFact.o mat2d.o util.o adjlst.o
-	$(CC) $(CFLAGS) $(OPT) -o $(OUT) matFact.o mat2d.o util.o adjlst.o
-
-omp: matFact-omp.o
-	$(CC) $(CFLAGS) -o $(OUT) matFact-omp.o
-
-omp-opt: matFact-omp.o
-	$(CC) $(CFLAGS) $(OPT) -o $(OUT) matFact-omp.o
+omp: matFact-omp.o mat2d.o util.o adjlst.o
+	$(CC) $(CFLAGS) -o $(OUT) matFact-omp.o mat2d.o util.o adjlst.o
 
 matFact.o: matFact.c
 	$(CC) $(CFLAGS) -c matFact.c
