@@ -2,19 +2,19 @@
 CC = gcc
 
 # compiler flags
-CFLAGS = -Wall -Wextra -g
-OPT = -O3
+CFLAGS = -Wall -Wextra
+OPT = -O2
 
 # output name
 OUT = matFact.out
 
 default: serial
 
-serial: matFact.o
-	$(CC) $(CFLAGS) -o $(OUT) matFact.o
+serial: matFact.o mat2d.o util.o adjlst.o
+	$(CC) $(CFLAGS) -o $(OUT) matFact.o mat2d.o util.o adjlst.o
 
-serial-opt: matFact.o
-	$(CC) $(CFLAGS) $(OPT) -o $(OUT) matFact.o
+serial-opt: matFact.o mat2d.o util.o adjlst.o
+	$(CC) $(CFLAGS) $(OPT) -o $(OUT) matFact.o mat2d.o util.o adjlst.o
 
 omp: matFact-omp.o
 	$(CC) $(CFLAGS) -o $(OUT) matFact-omp.o
@@ -27,6 +27,15 @@ matFact.o: matFact.c
 
 matFact-omp.o: matFact-omp.c
 	$(CC) $(CFLAGS) -c matFact-omp.c
+
+mat2d.o: mat2d.c mat2d.h util.h
+	$(CC) $(CFLAGS) -c mat2d.c
+
+adjlst.o: adjlst.c adjlst.h
+	$(CC) $(CFLAGS) -c adjlst.c
+
+util.o: util.c util.h
+	$(CC) $(CFLAGS) -c util.c
 
 clean:
 	rm -f $(OUT) *.o

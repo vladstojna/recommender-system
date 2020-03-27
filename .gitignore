@@ -1,3 +1,6 @@
+# vscode
+.vscode
+
 # Prerequisites
 *.d
 
@@ -35,6 +38,9 @@
 *.i*86
 *.x86_64
 *.hex
+
+# no sample outputs ignore
+!samples/*.out
 
 # Debug files
 *.dSYM/
