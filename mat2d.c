@@ -39,6 +39,10 @@ void mat2d_copy(mat2d *from, mat2d *to) {
 	memcpy(to->data, from->data, sizeof(double) * to->n_r * to->n_c);
 }
 
+void mat2d_copy_parallel(mat2d *from, mat2d *to) {
+	memcpy_parallel(to->data, from->data, to->n_r * to->n_c, sizeof(double));
+}
+
 void mat2d_print(mat2d *mat) {
 	printf("\n");
 
@@ -65,6 +69,10 @@ void mat2d_random_fill_LR(mat2d *L, mat2d *R, double norm) {
 
 void mat2d_zero(mat2d *mat) {
 	memset(mat->data, 0, mat->n_r * mat->n_c * sizeof(double));
+}
+
+void mat2d_zero_parallel(mat2d *mat) {
+	memset_parallel(mat->data, 0, mat->n_r * mat->n_c, sizeof(double));
 }
 
 // Assumes R is transposed

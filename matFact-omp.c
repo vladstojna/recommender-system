@@ -50,12 +50,10 @@ void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries,
 	for (int iter = 0; iter < iters; iter++)
 	{
 
-		// Sections are better if workload is heavy
-		#pragma omp single
-		{
-			mat2d_zero(L);
-			mat2d_zero(R);
-		}
+		// parallelizing memset helps with bigger matrices
+		mat2d_zero_parallel(L);
+		mat2d_zero_parallel(R);
+		#pragma omp barrier
 
 		#pragma omp for
 		for (int n = 0; n < nz_size; n++)
