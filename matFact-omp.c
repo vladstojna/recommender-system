@@ -41,18 +41,13 @@ void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries,
 	mat2d *L_stable = mat2d_new(users, features);
 	mat2d *R_stable = mat2d_new(items, features);
 
-	mat2d_copy(L, L_stable);
-	mat2d_copy(R, R_stable);
-
 	#pragma omp parallel
 	{
 
 	for (int iter = 0; iter < iters; iter++)
 	{
-
-		// parallelizing memset helps with bigger matrices
-		mat2d_zero_parallel(L);
-		mat2d_zero_parallel(R);
+		mat2d_copy_parallel(L, L_stable);
+		mat2d_copy_parallel(R, R_stable);
 		#pragma omp barrier
 
 		#pragma omp for
@@ -60,39 +55,21 @@ void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries,
 		{
 			int i = entries[n].row;
 			int j = entries[n].col;
-			double dot = mat2d_dot_product(L_stable, i, R_stable, j);
-			double value = entries[n].value;
+			double value = alpha * 2 * (entries[n].value - mat2d_dot_product(L_stable, i, R_stable, j));
 
 			for (int k = 0; k < features; k++) {
 				#pragma omp atomic
-				mat2d_set(L, i, k, mat2d_get(L, i, k) + (value - dot) *
-				(-mat2d_get(R_stable, j, k)));
+				mat2d_set(L, i, k, mat2d_get(L, i, k) - value *
+					(-mat2d_get(R_stable, j, k)));
 
 				#pragma omp atomic
-				mat2d_set(R, j, k, mat2d_get(R, j, k) + (value - dot) *
-				(-mat2d_get(L_stable, i, k)));
+				mat2d_set(R, j, k, mat2d_get(R, j, k) - value *
+					(-mat2d_get(L_stable, i, k)));
 			}
 		}
-
-		#pragma omp for
-		for (int r = 0; r < users; r++)
-			for (int c = 0; c < features; c++)
-				mat2d_set(L, r, c, mat2d_get(L_stable, r, c) - alpha * 2 * mat2d_get(L, r, c));
-
-		#pragma omp for
-		for (int r = 0; r < items; r++)
-			for (int c = 0; c < features; c++)
-				mat2d_set(R, r, c, mat2d_get(R_stable, r, c) - alpha * 2 * mat2d_get(R, r, c));
-
-		#pragma omp single
-		{
-			swap(mat2d*, L, L_stable);
-			swap(mat2d*, R, R_stable);
-		}
-		
 	}
 
-	mat2d_prod(L_stable, R_stable, B);
+	mat2d_prod(L, R, B);
 
 	}
 
