@@ -24,6 +24,7 @@ void mat2d_zero_parallel(mat2d *mat);
 
 void mat2d_print(mat2d *mat);
 
+void mat2d_sum(mat2d *res, mat2d *m);
 void mat2d_prod(mat2d *left, mat2d *right, mat2d *dest);
 void mat2d_transpose(mat2d *orig, mat2d *transpose);
 double mat2d_dot_product(mat2d *left, int r, mat2d *right, int c);

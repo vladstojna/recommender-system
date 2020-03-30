@@ -6,6 +6,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <omp.h>
 
 #define swap(T, a, b) { T tmp = a; a = b; b = tmp; }
 
@@ -35,6 +36,20 @@ void print_output(mat2d *B, non_zero_entry *entries) {
 	}
 }
 
+mat2d **reduction_array;
+
+mat2d *init_reduction_L() {
+	mat2d *res = reduction_array[omp_get_thread_num()];
+	mat2d_zero(res);
+	return res;
+}
+
+mat2d *init_reduction_R() {
+	mat2d *res = reduction_array[omp_get_thread_num() + omp_get_num_threads()];
+	mat2d_zero(res);
+	return res;
+}
+
 void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries, int nz_size, int iters, double alpha) {
 	int users = mat2d_rows(B);
 	int items = mat2d_cols(B);
@@ -45,13 +60,36 @@ void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries,
 	#pragma omp parallel
 	{
 
+	int num_threads = omp_get_num_threads();
+	int tid = omp_get_thread_num();
+
+	#pragma omp single
+	{
+		reduction_array = malloc(sizeof(mat2d*) * num_threads * 2);
+	}
+
+	reduction_array[tid] = mat2d_new(users, features);
+	reduction_array[tid + num_threads] = mat2d_new(items, features);
+
+	#pragma omp declare reduction( \
+		mat2d_reduction_L : \
+		mat2d * : \
+		mat2d_sum(omp_out, omp_in)) \
+		initializer(omp_priv = init_reduction_L())
+
+	#pragma omp declare reduction( \
+		mat2d_reduction_R : \
+		mat2d * : \
+		mat2d_sum(omp_out, omp_in)) \
+		initializer(omp_priv = init_reduction_R())
+
 	for (int iter = 0; iter < iters; iter++)
 	{
 		mat2d_copy_parallel(L, L_stable);
 		mat2d_copy_parallel(R, R_stable);
 		#pragma omp barrier
 
-		#pragma omp for
+		#pragma omp for reduction(mat2d_reduction_L : L) reduction(mat2d_reduction_R : R)
 		for (int n = 0; n < nz_size; n++)
 		{
 			int i = entries[n].row;
@@ -59,11 +97,9 @@ void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries,
 			double value = alpha * 2 * (entries[n].value - mat2d_dot_product(L_stable, i, R_stable, j));
 
 			for (int k = 0; k < features; k++) {
-				#pragma omp atomic
 				mat2d_set(L, i, k, mat2d_get(L, i, k) - value *
 					(-mat2d_get(R_stable, j, k)));
 
-				#pragma omp atomic
 				mat2d_set(R, j, k, mat2d_get(R, j, k) - value *
 					(-mat2d_get(L_stable, i, k)));
 			}

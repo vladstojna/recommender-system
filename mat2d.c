@@ -75,6 +75,20 @@ void mat2d_zero_parallel(mat2d *mat) {
 	memset_parallel(mat->data, 0, mat->n_r * mat->n_c, sizeof(double));
 }
 
+void mat2d_sum(mat2d *res, mat2d *m) {
+	if (mat2d_rows(res) != mat2d_rows(m) || mat2d_cols(res) != mat2d_cols(res))
+		die("Cannot sum matrices.");
+
+	int rows = mat2d_rows(res);
+	int cols = mat2d_cols(res);
+
+	for (int i = 0; i < rows; ++i) {
+		for (int j = 0; j < cols; ++j) {
+			mat2d_set(res, i, j, mat2d_get(res, i, j) + mat2d_get(m, i, j));
+		}
+	}
+}
+
 // Assumes R is transposed
 void mat2d_prod(mat2d *left, mat2d *right, mat2d *dest) {
 	if (left->n_c != right->n_c)
