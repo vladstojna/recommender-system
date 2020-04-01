@@ -39,6 +39,10 @@ void mat2d_copy(mat2d *from, mat2d *to) {
 	memcpy(to->data, from->data, sizeof(double) * to->n_r * to->n_c);
 }
 
+void mat2d_copy_parallel(mat2d *from, mat2d *to) {
+	memcpy_parallel(to->data, from->data, to->n_r * to->n_c, sizeof(double));
+}
+
 void mat2d_print(mat2d *mat) {
 	printf("\n");
 
@@ -67,14 +71,33 @@ void mat2d_zero(mat2d *mat) {
 	memset(mat->data, 0, mat->n_r * mat->n_c * sizeof(double));
 }
 
+void mat2d_zero_parallel(mat2d *mat) {
+	memset_parallel(mat->data, 0, mat->n_r * mat->n_c, sizeof(double));
+}
+
+void mat2d_sum(mat2d *res, mat2d *m) {
+	if (mat2d_rows(res) != mat2d_rows(m) || mat2d_cols(res) != mat2d_cols(res))
+		die("Cannot sum matrices.");
+
+	int rows = mat2d_rows(res);
+	int cols = mat2d_cols(res);
+
+	#pragma omp for nowait
+	for (int i = 0; i < rows; ++i) {
+		for (int j = 0; j < cols; ++j) {
+			mat2d_set(res, i, j, mat2d_get(res, i, j) + mat2d_get(m, i, j));
+		}
+	}
+}
+
 // Assumes R is transposed
 void mat2d_prod(mat2d *left, mat2d *right, mat2d *dest) {
 	if (left->n_c != right->n_c)
 		die("The given matrices can't be multiplied with each other.");
 
+	#pragma omp for
 	for (int i = 0; i < left->n_r; i++) {
 		for (int j = 0; j < right->n_r; j++) {
-
 			mat2d_set(dest, i, j, 0);
 			for (int k = 0; k < left->n_c; k++) {
 				mat2d_set(dest, i, j, mat2d_get(dest, i, j) + mat2d_get(left, i, k) * mat2d_get(right, j, k));

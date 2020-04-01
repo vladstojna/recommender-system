@@ -20,17 +20,18 @@ void print_output(mat2d *B, non_zero_entry *entries) {
 	int users = mat2d_rows(B);
 	int items = mat2d_cols(B);
 	for (int i = 0, aix = 0; i < users; i++) {
-		int max = 0;
+		int max = -1;
 		for (int j = 0; j < items; j++) {
 			if (!(entries[aix].row == i && entries[aix].col == j)) {
-				if (mat2d_get(B, i, j) > mat2d_get(B, i, max)) {
+				if (max == -1 || mat2d_get(B, i, j) > mat2d_get(B, i, max)) {
 					max = j;
 				}
 			} else {
 				aix++;
 			}
 		}
-		printf("%d\n", max);
+		if (max != -1)
+			printf("%d\n", max);
 	}
 }
 
