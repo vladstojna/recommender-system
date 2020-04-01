@@ -8,6 +8,14 @@
 #include <stdlib.h>
 #include <omp.h>
 
+/* 0 - atomic; 1 - reduce R; 2 - reduce L; 3 - reduce both */
+#define METHOD 0
+#define REDUCTION METHOD >=1 && METHOD <= 3
+#define ATOMIC METHOD == 0
+#define REDUCE_R METHOD == 1
+#define REDUCE_L METHOD == 2
+#define REDUCE_BOTH METHOD == 3
+
 #define swap(T, a, b) { T tmp = a; a = b; b = tmp; }
 
 typedef struct
@@ -16,6 +24,20 @@ typedef struct
 	int col;
 	double value;
 } non_zero_entry;
+
+int col_cmp(const void *a, const void *b) {
+	non_zero_entry *nz_a = (non_zero_entry*) a;
+	non_zero_entry *nz_b = (non_zero_entry*) b;
+
+	return nz_a->col == nz_b->col ? nz_a->row - nz_b->row : nz_a->col - nz_b->col;
+}
+
+int row_cmp(const void *a, const void *b) {
+	non_zero_entry *nz_a = (non_zero_entry*) a;
+	non_zero_entry *nz_b = (non_zero_entry*) b;
+
+	return nz_a->row == nz_b->row ? nz_a->col - nz_b->col : nz_a->row - nz_b->row;
+}
 
 void print_output(mat2d *B, non_zero_entry *entries) {
 	int users = mat2d_rows(B);
@@ -36,20 +58,6 @@ void print_output(mat2d *B, non_zero_entry *entries) {
 	}
 }
 
-mat2d **reduction_array;
-
-mat2d *init_reduction_L() {
-	mat2d *res = reduction_array[omp_get_thread_num()];
-	mat2d_zero(res);
-	return res;
-}
-
-mat2d *init_reduction_R() {
-	mat2d *res = reduction_array[omp_get_thread_num() + omp_get_num_threads()];
-	mat2d_zero(res);
-	return res;
-}
-
 void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries, int nz_size, int iters, double alpha) {
 	int users = mat2d_rows(B);
 	int items = mat2d_cols(B);
@@ -57,31 +65,42 @@ void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries,
 	mat2d *L_stable = mat2d_new(users, features);
 	mat2d *R_stable = mat2d_new(items, features);
 
+	#ifndef METHOD
+	#define METHOD 0 // default is atomic
+	#endif
+
+	#if REDUCTION
+	mat2d **reduction_array;
+	#endif
+
 	#pragma omp parallel
 	{
+
+	#if REDUCTION
 
 	int num_threads = omp_get_num_threads();
 	int tid = omp_get_thread_num();
 
 	#pragma omp single
 	{
-		reduction_array = malloc(sizeof(mat2d*) * num_threads * 2);
+		#if REDUCE_BOTH
+		reduction_array = malloc(2 * num_threads * sizeof(mat2d*));
+		#else
+		reduction_array = malloc(num_threads * sizeof(mat2d*));
+		#endif
 	}
 
+	#endif
+
+	#if REDUCE_L || REDUCE_BOTH
 	reduction_array[tid] = mat2d_new(users, features);
+	#endif
+	#if REDUCE_R
+	reduction_array[tid] = mat2d_new(items, features);
+	#endif
+	#if REDUCE_BOTH
 	reduction_array[tid + num_threads] = mat2d_new(items, features);
-
-	#pragma omp declare reduction( \
-		mat2d_reduction_L : \
-		mat2d * : \
-		mat2d_sum(omp_out, omp_in)) \
-		initializer(omp_priv = init_reduction_L())
-
-	#pragma omp declare reduction( \
-		mat2d_reduction_R : \
-		mat2d * : \
-		mat2d_sum(omp_out, omp_in)) \
-		initializer(omp_priv = init_reduction_R())
+	#endif
 
 	for (int iter = 0; iter < iters; iter++)
 	{
@@ -89,7 +108,24 @@ void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries,
 		mat2d_copy_parallel(R, R_stable);
 		#pragma omp barrier
 
-		#pragma omp for reduction(mat2d_reduction_L : L) reduction(mat2d_reduction_R : R)
+		#if REDUCE_L || REDUCE_BOTH
+		mat2d *partial_L = reduction_array[tid];
+		#endif
+		#if REDUCE_R
+		mat2d *partial_R = reduction_array[tid];
+		#endif
+		#if REDUCE_BOTH
+		mat2d *partial_R = reduction_array[tid + num_threads];
+		#endif
+
+		#if REDUCE_L || REDUCE_BOTH
+		mat2d_zero(partial_L);
+		#endif
+		#if REDUCE_R || REDUCE_BOTH
+		mat2d_zero(partial_R);
+		#endif
+
+		#pragma omp for
 		for (int n = 0; n < nz_size; n++)
 		{
 			int i = entries[n].row;
@@ -97,18 +133,58 @@ void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries,
 			double value = alpha * 2 * (entries[n].value - mat2d_dot_product(L_stable, i, R_stable, j));
 
 			for (int k = 0; k < features; k++) {
+				#if ATOMIC || REDUCE_R
+				#pragma omp atomic
 				mat2d_set(L, i, k, mat2d_get(L, i, k) - value *
 					(-mat2d_get(R_stable, j, k)));
+				#elif REDUCE_L || REDUCE_BOTH
+				mat2d_set(partial_L, i, k, mat2d_get(partial_L, i, k) - value *
+					(-mat2d_get(R_stable, j, k)));
+				#endif
 
+				#if ATOMIC || REDUCE_L
+				#pragma omp atomic
 				mat2d_set(R, j, k, mat2d_get(R, j, k) - value *
 					(-mat2d_get(L_stable, i, k)));
+				#elif REDUCE_R || REDUCE_BOTH
+				mat2d_set(partial_R, j, k, mat2d_get(partial_R, j, k) - value *
+					(-mat2d_get(L_stable, i, k)));
+				#endif
 			}
 		}
+
+		#if REDUCTION
+
+		for (int t = 0; t < num_threads; t++) {
+			#if REDUCE_L || REDUCE_BOTH
+			mat2d_sum(L, reduction_array[t]);
+			#endif
+			#if REDUCE_R
+			mat2d_sum(R, reduction_array[t]);
+			#endif
+			#if REDUCE_BOTH
+			mat2d_sum(R, reduction_array[t + num_threads]);
+			#endif
+		}
+		#pragma omp barrier
+
+		#endif
 	}
 
 	mat2d_prod(L, R, B);
 
+	#if REDUCTION
+	free(reduction_array[tid]);
+	#endif
+	#if REDUCE_BOTH
+	free(reduction_array[tid + num_threads]);
+	#endif
+
 	}
+
+	#if REDUCTION
+	free(reduction_array);
+	#endif
 
 	mat2d_free(L_stable);
 	mat2d_free(R_stable);
@@ -177,11 +253,15 @@ int main(int argc, char **argv)
 
 	mat2d *B = mat2d_new(users, items);
 
+	// qsort(entries, non_zero, sizeof(non_zero_entry), col_cmp);
+
 	__end_benchmark("input", 1)
 
 	__start_benchmark;
 	matrix_factorization(B, L, R, entries, non_zero, iters, alpha);
 	__end_benchmark("main loop", 1);
+
+	// qsort(entries, non_zero, sizeof(non_zero_entry), row_cmp);
 
 	// print output
 	__start_benchmark
