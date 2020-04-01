@@ -82,6 +82,7 @@ void mat2d_sum(mat2d *res, mat2d *m) {
 	int rows = mat2d_rows(res);
 	int cols = mat2d_cols(res);
 
+	#pragma omp for nowait
 	for (int i = 0; i < rows; ++i) {
 		for (int j = 0; j < cols; ++j) {
 			mat2d_set(res, i, j, mat2d_get(res, i, j) + mat2d_get(m, i, j));
