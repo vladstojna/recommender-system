@@ -39,8 +39,8 @@ void mat2d_copy(mat2d *from, mat2d *to) {
 	memcpy(to->data, from->data, sizeof(double) * to->n_r * to->n_c);
 }
 
-void mat2d_copy_parallel(mat2d *from, mat2d *to) {
-	memcpy_parallel(to->data, from->data, to->n_r * to->n_c, sizeof(double));
+void mat2d_copy_parallel(mat2d *from, mat2d *to, int tid, int num_threads) {
+	memcpy_parallel(to->data, from->data, to->n_r * to->n_c, sizeof(double), tid, num_threads);
 }
 
 void mat2d_print(mat2d *mat) {
@@ -71,8 +71,8 @@ void mat2d_zero(mat2d *mat) {
 	memset(mat->data, 0, mat->n_r * mat->n_c * sizeof(double));
 }
 
-void mat2d_zero_parallel(mat2d *mat) {
-	memset_parallel(mat->data, 0, mat->n_r * mat->n_c, sizeof(double));
+void mat2d_zero_parallel(mat2d *mat, int tid, int num_threads) {
+	memset_parallel(mat->data, 0, mat->n_r * mat->n_c, sizeof(double), tid, num_threads);
 }
 
 void mat2d_sum(mat2d *res, mat2d *m) {

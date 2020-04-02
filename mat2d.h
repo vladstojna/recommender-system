@@ -18,9 +18,9 @@ void mat2d_set_line(mat2d *mat, int line, double *value);
 
 void mat2d_random_fill_LR(mat2d *L, mat2d *R, double norm);
 void mat2d_copy(mat2d *from, mat2d *to);
-void mat2d_copy_parallel(mat2d *from, mat2d *to);
+void mat2d_copy_parallel(mat2d *from, mat2d *to, int tid, int num_threads);
 void mat2d_zero(mat2d *mat);
-void mat2d_zero_parallel(mat2d *mat);
+void mat2d_zero_parallel(mat2d *mat, int tid, int num_threads);
 
 void mat2d_print(mat2d *mat);
 

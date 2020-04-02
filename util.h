@@ -19,9 +19,9 @@ void parse_three_ints(FILE *fp, int *a, int *b, int *c);
 void parse_non_zero_entry(FILE *fp, int *row, int *col, double *value);
 
 // Parallelized memset
-void memset_parallel(void *s, int val, size_t sz, size_t type_sz);
+void memset_parallel(void *s, int val, size_t sz, size_t type_sz, int tid, int num_threads);
 
 // Parallelized memcpy
-void memcpy_parallel(void *dest, const void *src, size_t sz, size_t type_sz);
+void memcpy_parallel(void *dest, const void *src, size_t sz, size_t type_sz, int tid, int num_threads);
 
 #endif

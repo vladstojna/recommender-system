@@ -34,20 +34,16 @@ void parse_non_zero_entry(FILE *fp, int *row, int *col, double *val) {
 	}
 }
 
-void memset_parallel(void *s, int val, size_t sz, size_t type_sz) {
-	int num_threads = omp_get_num_threads();
-	int id = omp_get_thread_num();
-	size_t stride = sz / num_threads + (sz % num_threads != 0);
-	memset((char*) s + id * stride * type_sz,
+void memset_parallel(void *s, int val, size_t sz, size_t type_sz, int tid, int num_threads) {
+	size_t stride = sz / num_threads;
+	memset((char*) s + tid * stride * type_sz,
 		val,
-		type_sz * (stride * (id + 1) > sz ? sz - stride * id : stride));
+		type_sz * ((tid + 1) == num_threads ? sz - stride * tid : stride));
 }
 
-void memcpy_parallel(void *dest, const void *src, size_t sz, size_t type_sz) {
-	int num_threads = omp_get_num_threads();
-	int id = omp_get_thread_num();
-	size_t stride = sz / num_threads + (sz % num_threads != 0);
-	memcpy((char*) dest + id * stride * type_sz,
-		(char*) src + id * stride * type_sz,
-		type_sz * (stride * (id + 1) > sz ? sz - stride * id : stride));
+void memcpy_parallel(void *dest, const void *src, size_t sz, size_t type_sz, int tid, int num_threads) {
+	size_t stride = sz / num_threads;
+	memcpy((char*) dest + tid * stride * type_sz,
+		(char*) src + tid * stride * type_sz,
+		type_sz * ((tid + 1) == num_threads ? sz - stride * tid : stride));
 }

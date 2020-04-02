@@ -76,10 +76,10 @@ void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries,
 	#pragma omp parallel
 	{
 
-	#if REDUCTION
-
 	int num_threads = omp_get_num_threads();
 	int tid = omp_get_thread_num();
+
+	#if REDUCTION
 
 	#pragma omp single
 	{
@@ -104,8 +104,8 @@ void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries,
 
 	for (int iter = 0; iter < iters; iter++)
 	{
-		mat2d_copy_parallel(L, L_stable);
-		mat2d_copy_parallel(R, R_stable);
+		mat2d_copy_parallel(L, L_stable, tid, num_threads);
+		mat2d_copy_parallel(R, R_stable, tid, num_threads);
 		#pragma omp barrier
 
 		#if REDUCE_L || REDUCE_BOTH
@@ -253,7 +253,11 @@ int main(int argc, char **argv)
 
 	mat2d *B = mat2d_new(users, items);
 
-	// qsort(entries, non_zero, sizeof(non_zero_entry), col_cmp);
+	/*
+	__start_benchmark
+	qsort(entries, non_zero, sizeof(non_zero_entry), col_cmp);
+	__end_benchmark("sort before", 1);
+	*/
 
 	__end_benchmark("input", 1)
 
@@ -261,7 +265,11 @@ int main(int argc, char **argv)
 	matrix_factorization(B, L, R, entries, non_zero, iters, alpha);
 	__end_benchmark("main loop", 1);
 
-	// qsort(entries, non_zero, sizeof(non_zero_entry), row_cmp);
+	/*
+	__start_benchmark
+	qsort(entries, non_zero, sizeof(non_zero_entry), row_cmp);
+	__end_benchmark("sort after", 1);
+	*/
 
 	// print output
 	__start_benchmark
