@@ -1,7 +1,6 @@
 // parallel implementation using OpenMP
 #include "util.h"
 #include "mat2d.h"
-#include "adjlst.h"
 #include "benchmark.h"
 
 #include <stdio.h>
@@ -221,33 +220,25 @@ int main(int argc, char **argv)
 
 	mat2d *B = mat2d_new(users, items);
 
-	__start_benchmark
 	if (items > users) {
 		qsort(entries, non_zero, sizeof(non_zero_entry), col_cmp);
 	}
-	__end_benchmark("sort before", 1);
 
-	__end_benchmark("input", 1)
-
-	__start_benchmark;
 	matrix_factorization(B, L, R, entries, non_zero, iters, alpha);
-	__end_benchmark("main loop", 1);
 
-	__start_benchmark
 	if (items > users) {
 		qsort(entries, non_zero, sizeof(non_zero_entry), row_cmp);
 	}
-	__end_benchmark("sort after", 1);
 
 	// print output
-	__start_benchmark
 	print_output(B, entries);
-	__end_benchmark("output", 1)
 
 	mat2d_free(B);
 	mat2d_free(L);
 	mat2d_free(R);
 	free(entries);
+
+	__end_benchmark("time", 1)
 
 	return 0;
 }
