@@ -8,7 +8,9 @@
 #include <omp.h>
 
 /* 0 - atomic; 1 - reduce */
+#ifndef REDUCTION
 #define REDUCTION 1
+#endif
 
 typedef struct
 {
@@ -54,10 +56,6 @@ void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries,
 	int features = mat2d_cols(L);
 	mat2d *L_stable = mat2d_new(users, features);
 	mat2d *R_stable = mat2d_new(items, features);
-
-	#ifndef REDUCTION
-	#define REDUCTION 1 // reduction ON by default
-	#endif
 
 	#if REDUCTION
 
