@@ -64,6 +64,9 @@ void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries,
 	int reduce_L = (items > users);
 	mat2d **reduction_array;
 
+	if (reduce_L)
+		qsort(entries, nz_size, sizeof(non_zero_entry), col_cmp);
+
 	#endif
 
 	#pragma omp parallel
@@ -151,6 +154,9 @@ void matrix_factorization(mat2d *B, mat2d *L, mat2d *R, non_zero_entry *entries,
 
 	#if REDUCTION
 	free(reduction_array);
+
+	if (reduce_L)
+		qsort(entries, nz_size, sizeof(non_zero_entry), row_cmp);
 	#endif
 
 	mat2d_free(L_stable);
@@ -220,15 +226,7 @@ int main(int argc, char **argv)
 
 	mat2d *B = mat2d_new(users, items);
 
-	if (items > users) {
-		qsort(entries, non_zero, sizeof(non_zero_entry), col_cmp);
-	}
-
 	matrix_factorization(B, L, R, entries, non_zero, iters, alpha);
-
-	if (items > users) {
-		qsort(entries, non_zero, sizeof(non_zero_entry), row_cmp);
-	}
 
 	// print output
 	print_output(B, entries);
