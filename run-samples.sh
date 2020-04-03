@@ -9,7 +9,7 @@ reduction='########### Reduction ###########'
 sep=$(printf '=%.0s' {1..50})
 sep_small=$(printf '=%.0s' {1..20})
 
-tries=2
+tries=1
 threads=16
 
 echo "Starting performance dump"
@@ -26,12 +26,12 @@ echo $sep
 
 for f in $(ls $sample_dir/*.in)
 do
-	echo $f | sed '#s|.*/||'
+	echo $f | sed 's|.*/||'
 	echo $sep_small
 
 	for _ in $(seq $tries)
 	do
-		$bin $f | tail -1 | sed '#s|.*: ||'
+		$bin $f | tail -1 | sed 's|.*: ||'
 		sleep 1
 	done
 
