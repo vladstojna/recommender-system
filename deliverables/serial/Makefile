@@ -2,10 +2,10 @@
 CC = gcc
 
 # compiler flags
-CFLAGS = -Wall -Wextra -fopenmp
+CFLAGS = -Wall -Wextra
 
 # output name
-OUT = matFact.out
+OUT = matFact
 
 default: serial
 

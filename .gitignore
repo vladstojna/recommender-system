@@ -1,3 +1,7 @@
+# executables
+matFact
+matFact-omp
+
 # vscode
 .vscode
 

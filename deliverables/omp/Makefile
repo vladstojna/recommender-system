@@ -5,7 +5,7 @@ CC = gcc
 CFLAGS = -Wall -Wextra -fopenmp
 
 # output name
-OUT = matFact.out
+OUT = matFact-omp
 
 default: omp
 

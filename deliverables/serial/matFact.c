@@ -7,8 +7,6 @@
  * Utility functions
  ***************************************************/
 
-#define swap(T, a, b) { T tmp = a; a = b; b = tmp; }
-
 void die(const char *error) {
 	fprintf(stderr, "Error: %s\n", error);
 	exit(-1);
