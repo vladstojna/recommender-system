@@ -31,16 +31,16 @@ double *mat2d_get_line(mat2d *mat, int line) {
 	return &(mat->data[line * mat->n_c]);
 }
 
-void mat2d_set_line(mat2d *mat, int line, double *values) {
-	memcpy(&(mat->data[line * mat->n_c]), values, mat->n_c * sizeof(double));
-}
-
 void mat2d_copy(mat2d *from, mat2d *to) {
 	memcpy(to->data, from->data, sizeof(double) * to->n_r * to->n_c);
 }
 
 void mat2d_copy_parallel(mat2d *from, mat2d *to, int tid, int num_threads) {
 	memcpy_parallel(to->data, from->data, to->n_r * to->n_c, sizeof(double), tid, num_threads);
+}
+
+void mat2d_zero(mat2d *mat) {
+	memset(mat->data, 0, mat->n_r * mat->n_c * sizeof(double));
 }
 
 void mat2d_print(mat2d *mat) {
@@ -67,14 +67,6 @@ void mat2d_random_fill_LR(mat2d *L, mat2d *R, double norm) {
 			mat2d_set(R, i, j, RAND01 / (double) norm);
 }
 
-void mat2d_zero(mat2d *mat) {
-	memset(mat->data, 0, mat->n_r * mat->n_c * sizeof(double));
-}
-
-void mat2d_zero_parallel(mat2d *mat, int tid, int num_threads) {
-	memset_parallel(mat->data, 0, mat->n_r * mat->n_c, sizeof(double), tid, num_threads);
-}
-
 void mat2d_sum(mat2d *res, mat2d *m) {
 	if (mat2d_rows(res) != mat2d_rows(m) || mat2d_cols(res) != mat2d_cols(res))
 		die("Cannot sum matrices.");
@@ -90,7 +82,6 @@ void mat2d_sum(mat2d *res, mat2d *m) {
 	}
 }
 
-// Assumes R is transposed
 void mat2d_prod(mat2d *left, mat2d *right, mat2d *dest) {
 	if (left->n_c != right->n_c)
 		die("The given matrices can't be multiplied with each other.");
@@ -117,7 +108,6 @@ void mat2d_transpose(mat2d *orig, mat2d *transpose) {
 	}
 }
 
-// Assumes right matrix is transposed
 double mat2d_dot_product(mat2d *left, int r, mat2d *right, int c) {
 	if (left->n_c != right->n_c) {
 		die("Cannot calculate dot product: invalid sizes.");

@@ -34,13 +34,6 @@ void parse_non_zero_entry(FILE *fp, int *row, int *col, double *val) {
 	}
 }
 
-void memset_parallel(void *s, int val, size_t sz, size_t type_sz, int tid, int num_threads) {
-	size_t stride = sz / num_threads;
-	memset((char*) s + tid * stride * type_sz,
-		val,
-		type_sz * ((tid + 1) == num_threads ? sz - stride * tid : stride));
-}
-
 void memcpy_parallel(void *dest, const void *src, size_t sz, size_t type_sz, int tid, int num_threads) {
 	size_t stride = sz / num_threads;
 	memcpy((char*) dest + tid * stride * type_sz,
