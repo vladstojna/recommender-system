@@ -1,4 +1,4 @@
-// serial implementation
+// mpi implementation
 #include "util.h"
 #include "mat2d.h"
 #include "benchmark.h"
