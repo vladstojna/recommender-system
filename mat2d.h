@@ -29,6 +29,9 @@ void mat2d_transpose(mat2d *orig, mat2d *transpose);
 // Assumes right is transposed
 double mat2d_dot_product(mat2d *left, int r, mat2d *right, int c);
 
+void mat2d_init_seed();
+void mat2d_random_fill(mat2d *m, double norm);
+
 #define mat2d_rows(m) m->n_r
 #define mat2d_cols(m) m->n_c
 #define mat2d_get(m, r, c) m->data[((r)*m->n_c) + (c)]
