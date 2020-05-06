@@ -34,9 +34,9 @@ typedef struct
 	double alpha;
 } dataset_info;
 
-void print_dataset_info(dataset_info *info) {
-	printf("-----\nIters=%d\nFeatures=%d\nUsers=%d\nItems=%d\nNon-zero size=%d\nAlpha=%f\n-----\n",
-		info->iters, info->features, info->users, info->items, info->non_zero_sz, info->alpha);
+void print_dataset_info(int rank, dataset_info *info) {
+	printf("-----\nRank=%d\nIters=%d\nFeatures=%d\nUsers=%d\nItems=%d\nNon-zero size=%d\nAlpha=%f\n-----\n",
+		rank, info->iters, info->features, info->users, info->items, info->non_zero_sz, info->alpha);
 }
 
 int create_non_zero_entry(MPI_Datatype *type)
@@ -65,44 +65,23 @@ typedef struct
 	non_zero_entry *entries;
 } input_info;
 
-int read_input(const char *file_name, input_info *info) {
-	FILE *fp = fopen(file_name, "r");
-	
+int read_input_metadata(FILE *fp, dataset_info *info) {
 	if (info == NULL)
 		return -1;
 
-	if (fp == NULL)
-		return -1;
-
 	// Reading number of iterations
-	parse_int(fp, &info->dataset_info.iters);
+	parse_int(fp, &info->iters);
 
 	// Reading learning rate
-	parse_double(fp, &info->dataset_info.alpha);
+	parse_double(fp, &info->alpha);
 
 	// Reading number of features
-	parse_int(fp, &info->dataset_info.features);
+	parse_int(fp, &info->features);
 
 	// Reading number of rows, columns and non-zero values in input matrix
 	// users == rows
 	// items == columns
-	parse_three_ints(fp, &info->dataset_info.users,
-		&info->dataset_info.items,
-		&info->dataset_info.non_zero_sz);
-
-	info->entries = malloc(sizeof(non_zero_entry) * info->dataset_info.non_zero_sz);
-
-	for (int i = 0; i < info->dataset_info.non_zero_sz; i++) {
-		int row, column;
-		double value;
-		parse_non_zero_entry(fp, &row, &column, &value);
-
-		non_zero_entry entry = { row, column, value };
-		info->entries[i] = entry;
-	}
-
-	if (fclose(fp) == EOF)
-		return -1;
+	parse_three_ints(fp, &info->users, &info->items, &info->non_zero_sz);
 
 	return 0;
 }
@@ -188,12 +167,54 @@ void matrix_factorization(int id, int p, double *L, double *R, input_info *info)
 	free(R_zero);
 }
 
+int read_non_zero_entries(FILE *fp, non_zero_entry *buffer, int buffsz, int blk_high) {
+	int entries_read = 0;
+	int row = 0;
+	int column;
+	double value;
+
+	long ftell_before;
+
+	do {
+
+		if (entries_read > buffsz) {
+			return -1;
+		}
+
+		/* peek next line to check if there was a row change */
+		ftell_before = ftell(fp);
+
+		int elems_read = fscanf(fp, "%d %d %lf", &row, &column, &value);
+		if (elems_read == EOF) {
+			return entries_read;
+		}
+		if (elems_read != 3) {
+			return -1;
+		}
+
+		/* rewind read line when row exceeds HIGH value */
+		if (row > blk_high) {
+			fseek(fp, ftell_before - ftell(fp), SEEK_CUR);
+			return entries_read;
+		}
+
+		buffer[entries_read++] = (non_zero_entry) { row, column, value };
+
+	} while (1);
+}
+
 int main(int argc, char **argv)
 {
 	if (argc != 2)
 	{
 		fprintf(stderr, "Run ./matFact.out file");
 		die("Missing input file name.");
+	}
+
+	FILE *fp = fopen(argv[1], "r");
+	if (fp == NULL)
+	{
+		die("Could not open file.");
 	}
 
 	int nproc, id;
@@ -204,61 +225,115 @@ int main(int argc, char **argv)
 
 	printf("Init rank = %d\n", id);
 
-	input_info local;
-	if (is_root(id)) {
-		if (read_input(argv[1], &local) != 0) {
-			die("Unable to initialize parameters.");
-		}
-		print_dataset_info(&local.dataset_info);
-	}
-
-	// Creating MPI types
+	MPI_Status status;
 	MPI_Datatype non_zero_type;
 	MPI_Datatype dataset_info_type;
 	create_non_zero_entry(&non_zero_type);
 	create_dataset_info(&dataset_info_type);
 
-	MPI_Bcast(&local.dataset_info, 1, dataset_info_type, 0, MPI_COMM_WORLD);
+	printf("rank=%d : init MPI types\n", id);
 
-	printf("Received dataset info, rank = %d\n", id);
+	/* the original, not partitioned dataset information */
+	dataset_info orig;
+
+	/* information after decomposition */
+	input_info local;
+
+	/**
+	 * temporary buffer to store read non-zero entries
+	 * must be the maximum size a decomposed block can take up
+	 */
+	non_zero_entry *tmpbuffer;
+	int tmpsize;
+
+	if (is_root(id)) {
+		if (read_input_metadata(fp, &orig) != 0) {
+			die("Unable to initialize parameters.");
+		}
+		print_dataset_info(id, &orig);
+
+		tmpsize = BLOCK_SIZE(nproc - 1, nproc, orig.users) * orig.items;
+		tmpbuffer = malloc(sizeof(non_zero_entry) * tmpsize);
+
+		int entries_read = read_non_zero_entries(fp, tmpbuffer, tmpsize,
+			BLOCK_HIGH(id, nproc, orig.users));
+		if (entries_read < 0) {
+			die("Unable to read non-zero entries");
+		}
+		local.dataset_info = (dataset_info) { orig.iters, orig.features,
+			BLOCK_SIZE(id, nproc, orig.users), BLOCK_SIZE(id, nproc, orig.items),
+			entries_read, orig.alpha };
+		local.entries = malloc(sizeof(non_zero_entry) * entries_read);
+		memcpy(local.entries, tmpbuffer, sizeof(non_zero_entry) * entries_read);
+
+		int next_id = id + 1;
+		while (next_id < nproc) {
+
+			entries_read = read_non_zero_entries(fp, tmpbuffer, tmpsize,
+				BLOCK_HIGH(next_id, nproc, orig.users));
+			if (entries_read < 0) {
+				die("Unable to read non-zero entries");
+			}
+			dataset_info tmpinfo = (dataset_info) { orig.iters, orig.features,
+				BLOCK_SIZE(next_id, nproc, orig.users), BLOCK_SIZE(next_id, nproc, orig.items),
+				entries_read, orig.alpha };
+			MPI_Send(&tmpinfo, 1, dataset_info_type, next_id, 0, MPI_COMM_WORLD);
+			MPI_Send(&tmpbuffer, entries_read, non_zero_type, next_id, 1, MPI_COMM_WORLD);
+
+			next_id++;
+		}
+	}
+
+	if (!is_root(id)) {
+		MPI_Recv(&local.dataset_info, 1, dataset_info_type, 0, 0, MPI_COMM_WORLD, &status);
+	}
+
+	print_dataset_info(id, &local.dataset_info);
 
 	if (!is_root(id)) {
 		local.entries = malloc(sizeof(non_zero_entry) * local.dataset_info.non_zero_sz);
+		MPI_Recv(local.entries, local.dataset_info.non_zero_sz, non_zero_type, 0, 1,
+			MPI_COMM_WORLD, &status);
 	}
 
-	MPI_Bcast(local.entries, local.dataset_info.non_zero_sz, non_zero_type, 0, MPI_COMM_WORLD);
+	printf("rank = %d : received non-zero entries\n", id);
 
-	printf("Received non-zero entries, rank = %d\n", id);
+	/*
 
 	// Creating L and R
-	mat2d *L = mat2d_new(local.dataset_info.users, local.dataset_info.features);
+	mat2d *L = mat2d_new(orig.dataset_info.users, orig.dataset_info.features);
 	// R is always assumed transposed
-	mat2d *R = mat2d_new(local.dataset_info.items, local.dataset_info.features);
+	mat2d *R = mat2d_new(orig.dataset_info.items, orig.dataset_info.features);
 
 	// initialize both matrices
 	if (is_root(id)) {
-		mat2d *R_init = mat2d_new(local.dataset_info.features, local.dataset_info.items);
-		mat2d_random_fill_LR(L, R_init, local.dataset_info.features);
+		mat2d *R_init = mat2d_new(orig.dataset_info.features, orig.dataset_info.items);
+		mat2d_random_fill_LR(L, R_init, orig.dataset_info.features);
 		mat2d_transpose(R_init, R);
 		mat2d_free(R_init);
 	}
 
 	printf("Initialized L and R, rank = %d\n", id);
 
+	if (fclose(fp) == EOF)
+		exit(1);
+
 	// MPI_Barrier(MPI_COMM_WORLD);
-	matrix_factorization(id, nproc, L->data, R->data, &local);
+	matrix_factorization(id, nproc, L->data, R->data, &orig);
 
 	// print output
 	if (is_root(id)) {
-		mat2d *B = mat2d_new(local.dataset_info.users, local.dataset_info.items);
+		mat2d *B = mat2d_new(orig.dataset_info.users, orig.dataset_info.items);
 		mat2d_prod(L, R, B);
-		print_output(B, local.entries);
+		print_output(B, orig.entries);
 		mat2d_free(B);
 	}
 
-	free(local.entries);
+	free(orig.entries);
 	mat2d_free(L);
 	mat2d_free(R);
+
+	*/
 
 	MPI_Finalize();
 
