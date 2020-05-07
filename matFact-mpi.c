@@ -35,7 +35,7 @@ typedef struct
 } dataset_info;
 
 void print_dataset_info(int rank, dataset_info *info) {
-	printf("-----\nRank=%d\nIters=%d\nFeatures=%d\nUsers=%d\nItems=%d\nNon-zero size=%d\nAlpha=%f\n-----\n",
+	printf("----- Rank=%d Iters=%d Features=%d Users=%d Items=%d Non-zero size=%d Alpha=%f -----\n",
 		rank, info->iters, info->features, info->users, info->items, info->non_zero_sz, info->alpha);
 }
 
@@ -223,52 +223,72 @@ int main(int argc, char **argv)
 	MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 	MPI_Comm_rank(MPI_COMM_WORLD, &id);
 
-	printf("Init rank = %d\n", id);
+	printf("rank = %d : init\n", id);
 
 	MPI_Status status;
+	MPI_Request request;
 	MPI_Datatype non_zero_type;
 	MPI_Datatype dataset_info_type;
 	create_non_zero_entry(&non_zero_type);
 	create_dataset_info(&dataset_info_type);
 
-	printf("rank=%d : init MPI types\n", id);
-
-	/* the original, not partitioned dataset information */
-	dataset_info orig;
-
 	/* information after decomposition */
 	input_info local;
 
 	/**
-	 * temporary buffer to store read non-zero entries
-	 * must be the maximum size a decomposed block can take up
+	 * L and R matrices
+	 * R is always assumed transposed
 	 */
-	non_zero_entry *tmpbuffer;
-	int tmpsize;
+	mat2d *L;
+	mat2d *R;
+
+	/**
+	 * matrix initialization must be done by a well defined order
+	 * first, initialize all L parts, by rank order
+	 * then, initialize all R parts, by rank order
+	 */
+	mat2d_init_seed();
 
 	if (is_root(id)) {
+		/* the original, not partitioned dataset information */
+		dataset_info orig;
 		if (read_input_metadata(fp, &orig) != 0) {
 			die("Unable to initialize parameters.");
 		}
 		print_dataset_info(id, &orig);
 
+		/**
+		 * temporary buffer to store read non-zero entries
+		 * size must be the maximum number of non-zero elements between the lines of a decomposed block
+		 */
+		non_zero_entry *tmpbuffer;
+		int tmpsize;
+
 		tmpsize = BLOCK_SIZE(nproc - 1, nproc, orig.users) * orig.items;
 		tmpbuffer = malloc(sizeof(non_zero_entry) * tmpsize);
 
+		/* init root's non-zery entries */
 		int entries_read = read_non_zero_entries(fp, tmpbuffer, tmpsize,
 			BLOCK_HIGH(id, nproc, orig.users));
 		if (entries_read < 0) {
 			die("Unable to read non-zero entries");
 		}
+
 		local.dataset_info = (dataset_info) { orig.iters, orig.features,
 			BLOCK_SIZE(id, nproc, orig.users), BLOCK_SIZE(id, nproc, orig.items),
 			entries_read, orig.alpha };
 		local.entries = malloc(sizeof(non_zero_entry) * entries_read);
 		memcpy(local.entries, tmpbuffer, sizeof(non_zero_entry) * entries_read);
 
+		/* init root's L matrix */
+		L = mat2d_new(local.dataset_info.users, local.dataset_info.features);
+		mat2d_random_fill(L, local.dataset_info.features);
+
+		mat2d *L_tmp;
+		mat2d *R_tmp;
+
 		int next_id = id + 1;
 		while (next_id < nproc) {
-
 			entries_read = read_non_zero_entries(fp, tmpbuffer, tmpsize,
 				BLOCK_HIGH(next_id, nproc, orig.users));
 			if (entries_read < 0) {
@@ -278,7 +298,35 @@ int main(int argc, char **argv)
 				BLOCK_SIZE(next_id, nproc, orig.users), BLOCK_SIZE(next_id, nproc, orig.items),
 				entries_read, orig.alpha };
 			MPI_Send(&tmpinfo, 1, dataset_info_type, next_id, 0, MPI_COMM_WORLD);
-			MPI_Send(&tmpbuffer, entries_read, non_zero_type, next_id, 1, MPI_COMM_WORLD);
+			MPI_Isend(&tmpbuffer, entries_read, non_zero_type, next_id, 1, MPI_COMM_WORLD, &request);
+
+			L_tmp = mat2d_new(tmpinfo.users, tmpinfo.features);
+			mat2d_random_fill(L_tmp, tmpinfo.features);
+			MPI_Send(mat2d_data(L_tmp), mat2d_size(L_tmp), MPI_DOUBLE, next_id, 2, MPI_COMM_WORLD);
+			mat2d_free(L_tmp);
+			MPI_Wait(&request, &status);
+
+			next_id++;
+		}
+
+		free(tmpbuffer);
+		if (fclose(fp) == EOF)
+			fprintf(stderr, "Unable to close file");
+
+		/* init root's R matrix */
+		mat2d *R_init = mat2d_new(local.dataset_info.features, local.dataset_info.items);
+		R = mat2d_new(local.dataset_info.items, local.dataset_info.features);
+		mat2d_transpose(R_init, R);
+		mat2d_random_fill(R, local.dataset_info.features);
+		mat2d_free(R_init);
+
+		/* Send R matrix blocks */
+		next_id = id + 1;
+		while (next_id < nproc) {
+			R_tmp = mat2d_new(BLOCK_SIZE(next_id, nproc, orig.items), orig.features);
+			mat2d_random_fill(R_tmp, orig.features);
+			MPI_Send(mat2d_data(R_tmp), mat2d_size(R_tmp), MPI_DOUBLE, next_id, 3, MPI_COMM_WORLD);
+			mat2d_free(R_tmp);
 
 			next_id++;
 		}
@@ -298,42 +346,27 @@ int main(int argc, char **argv)
 
 	printf("rank = %d : received non-zero entries\n", id);
 
-	/*
+	if (!is_root(id)) {
+		L = mat2d_new(local.dataset_info.users, local.dataset_info.features);
+		MPI_Irecv(mat2d_data(L), mat2d_size(L), MPI_DOUBLE, 0, 2, MPI_COMM_WORLD, &request);
 
-	// Creating L and R
-	mat2d *L = mat2d_new(orig.dataset_info.users, orig.dataset_info.features);
-	// R is always assumed transposed
-	mat2d *R = mat2d_new(orig.dataset_info.items, orig.dataset_info.features);
-
-	// initialize both matrices
-	if (is_root(id)) {
-		mat2d *R_init = mat2d_new(orig.dataset_info.features, orig.dataset_info.items);
-		mat2d_random_fill_LR(L, R_init, orig.dataset_info.features);
+		/* transponse while waiting for reception of L */
+		mat2d *R_init = mat2d_new(local.dataset_info.features, local.dataset_info.items);
+		MPI_Recv(mat2d_data(R_init), mat2d_size(R_init), MPI_DOUBLE, 0, 3, MPI_COMM_WORLD, &status);
+		R = mat2d_new(local.dataset_info.items, local.dataset_info.features);
 		mat2d_transpose(R_init, R);
 		mat2d_free(R_init);
+		MPI_Wait(&request, &status);
 	}
 
-	printf("Initialized L and R, rank = %d\n", id);
+	printf("rank = %d : received & initialized L and R\n", id);
 
-	if (fclose(fp) == EOF)
-		exit(1);
-
-	// MPI_Barrier(MPI_COMM_WORLD);
-	matrix_factorization(id, nproc, L->data, R->data, &orig);
-
+	// matrix_factorization(id, nproc, L->data, R->data, &orig);
 	// print output
-	if (is_root(id)) {
-		mat2d *B = mat2d_new(orig.dataset_info.users, orig.dataset_info.items);
-		mat2d_prod(L, R, B);
-		print_output(B, orig.entries);
-		mat2d_free(B);
-	}
 
-	free(orig.entries);
+	free(local.entries);
 	mat2d_free(L);
 	mat2d_free(R);
-
-	*/
 
 	MPI_Finalize();
 
