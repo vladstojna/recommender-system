@@ -355,6 +355,41 @@ void distribute_matrix_L(MPI_Comm cart_comm, int rows, int users, int features) 
 	free(buffer);
 }
 
+void init_distribute_matrix_R(MPI_Comm cart_comm, mat2d *R_init, int cols, int items, int features) {
+	double *buffer = malloc(sizeof(double) * items);
+
+	for (int f = 0; f < features; f++) {
+
+		for (int i = 0; i < items; i++) {
+			buffer[i] = RAND01 / features;
+		}
+
+		for (int col = 0; col < cols; col++) {
+
+			int dest_rank;
+			int coords[] = { 0, col };
+			MPI_Cart_rank(cart_comm, coords, &dest_rank);
+
+			int blocksz = BLOCK_SIZE(col, cols, items);
+			double *src_addr = buffer + BLOCK_LOW(col, cols, items);
+
+			if (is_root(dest_rank)) {
+				memcpy(mat2d_data(R_init)+ f * blocksz, src_addr, sizeof(double) * blocksz);
+			} else {
+				MPI_Send(src_addr, blocksz, MPI_DOUBLE, dest_rank, 3, cart_comm);
+			}
+		}
+	}
+	free(buffer);
+}
+
+void receive_matrix_R(MPI_Comm cart_comm, mat2d *R_init, int features, MPI_Status *status) {
+	double *base = mat2d_data(R_init);
+	for (int f = 0; f < features; f++, base += mat2d_cols(R_init)) {
+		MPI_Recv(base, mat2d_cols(R_init), MPI_DOUBLE, 0, 3, cart_comm, status);
+	}
+}
+
 int main(int argc, char **argv)
 {
 	if (argc != 2)
@@ -396,7 +431,7 @@ int main(int argc, char **argv)
 	grid_info grid;
 	MPI_Cart_get(cart_comm, 2, &grid.rows, &grid.rows_periodic, &grid.row);
 
-	printf("rank=%-3d : grid-ranks r=%d c=%d : dims %d x %d : coords (%d, %d)\n",
+	printf("rank=%-3d : row-rank=%d col-rank=%d : dims %d x %d : coords (%d, %d)\n",
 		rank, row_rank, col_rank, grid.rows, grid.cols, grid.row, grid.col);
 
 	/* the original, not partitioned dataset information */
@@ -460,25 +495,30 @@ int main(int argc, char **argv)
 	}
 
 	MPI_Bcast(mat2d_data(L), mat2d_size(L), MPI_DOUBLE, 0, row_comm);
-
 	printf("rank=%-3d : received matrix L block size=%d\n", rank, mat2d_size(L));
 
-	R = mat2d_new(local.dataset_info.items, local.dataset_info.features);
+	mat2d *R_init = mat2d_new(local.dataset_info.features, local.dataset_info.items);
 
 	if (is_root(rank)) {
-		// init & distribute
+		init_distribute_matrix_R(cart_comm, R_init, grid.cols, orig.items, orig.features);
 	} else if (rank < grid.cols) {
-		// receive R & transponse
+		receive_matrix_R(cart_comm, R_init, local.dataset_info.features, &status);
 	}
 
-	// MPI_Bcast(mat2d_data(R), mat2d_size(R), MPI_DOUBLE, 0, col_comm);
+	MPI_Bcast(mat2d_data(R_init), mat2d_size(R_init), MPI_DOUBLE, 0, col_comm);
+
+	R = mat2d_new(local.dataset_info.items, local.dataset_info.features);
+	mat2d_transpose(R_init, R);
+	mat2d_free(R_init);
+
+	printf("rank=%-3d : received matrix R block size=%d\n", rank, mat2d_size(R));
 
 	// matrix_factorization(rank, nproc, L->data, R->data, &orig);
 	// print output
 
 	free(local.entries);
 	mat2d_free(L);
-	mat2d_free(R);
+	//mat2d_free(R);
 
 	MPI_Finalize();
 
