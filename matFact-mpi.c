@@ -170,17 +170,17 @@ void matrix_factorization(
 	mat2d *L_aux = mat2d_new(users, features);
 	mat2d *R_aux = mat2d_new(items, features);
 
+	int row_rank;
+	int col_rank;
+	MPI_Comm_rank(row_comm, &row_rank);
+	MPI_Comm_rank(col_comm, &col_rank);
+
 	for (int iter = 0; iter < iters; iter++)
 	{
 		MPI_Barrier(MPI_COMM_WORLD);
 
-		if (is_root(rank)) {
-			mat2d_copy(L, L_aux);
-			mat2d_copy(R, R_aux);
-		} else {
-			mat2d_zero(L_aux);
-			mat2d_zero(R_aux);
-		}
+		is_root(col_rank) ? mat2d_copy(R, R_aux) : mat2d_zero(R_aux);
+		is_root(row_rank) ? mat2d_copy(L, L_aux) : mat2d_zero(L_aux);
 
 		for (int n = 0; n < nz_size; n++)
 		{
@@ -191,7 +191,7 @@ void matrix_factorization(
 			for (int k = 0; k < features; k++) {
 
 				mat2d_set(L_aux, i, k, mat2d_get(L_aux, i, k) - value *
-					(-mat2d_get(R_aux, j, k)));
+					(-mat2d_get(R, j, k)));
 				mat2d_set(R_aux, j, k, mat2d_get(R_aux, j, k) - value *
 					(-mat2d_get(L, i, k)));
 			}
