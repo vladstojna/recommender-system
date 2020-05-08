@@ -34,6 +34,28 @@ typedef struct
 	double alpha;
 } dataset_info;
 
+typedef struct
+{
+	int rows;
+	int cols;
+	int rows_periodic;
+	int cols_periodic;
+	int row;
+	int col;
+} grid_info;
+
+int col_cmp(const void *a, const void *b) {
+	non_zero_entry *nz_a = (non_zero_entry*) a;
+	non_zero_entry *nz_b = (non_zero_entry*) b;
+	return nz_a->col == nz_b->col ? nz_a->row - nz_b->row : nz_a->col - nz_b->col;
+}
+
+int row_cmp(const void *a, const void *b) {
+	non_zero_entry *nz_a = (non_zero_entry*) a;
+	non_zero_entry *nz_b = (non_zero_entry*) b;
+	return nz_a->row == nz_b->row ? nz_a->col - nz_b->col : nz_a->row - nz_b->row;
+}
+
 void print_dataset_info(int rank, dataset_info *info) {
 	printf("----- Rank=%d Iters=%d Features=%d Users=%d Items=%d Non-zero size=%d Alpha=%f -----\n",
 		rank, info->iters, info->features, info->users, info->items, info->non_zero_sz, info->alpha);
@@ -57,6 +79,22 @@ int create_dataset_info(MPI_Datatype *type)
 
 	MPI_Type_create_struct(2, blocklen, offsets, types, type);
 	return MPI_Type_commit(type);
+}
+
+void create_cart_comm(MPI_Comm *comm, int nproc)
+{
+	int size[] = { 0, 0 };
+	int periodic[] = { 0, 0 };
+	MPI_Dims_create(nproc, 2, size);
+	MPI_Cart_create(MPI_COMM_WORLD, 2, size, periodic, 1, comm);
+}
+
+void split_comms(MPI_Comm cart_comm, MPI_Comm *row_comm, MPI_Comm *col_comm, int rank)
+{
+	int coords[2];
+	MPI_Cart_coords(cart_comm, rank, 2, coords);
+	MPI_Comm_split(cart_comm, coords[0], coords[1], row_comm);
+	MPI_Comm_split(cart_comm, coords[1], coords[0], col_comm);
 }
 
 typedef struct
@@ -203,6 +241,98 @@ int read_non_zero_entries(FILE *fp, non_zero_entry *buffer, int buffsz, int blk_
 	} while (1);
 }
 
+void distribute_non_zero_values(
+		FILE *fp,
+		MPI_Comm cart_comm,
+		MPI_Datatype non_zero_type,
+		MPI_Datatype dataset_info_type,
+		int rows,
+		int cols,
+		input_info *local,
+		const dataset_info *orig)
+{
+	/**
+	 * temporary buffer to store read non-zero entries
+	 * size must be the maximum number of non-zero elements between the lines of a decomposed block
+	 */
+	int tmpsize = BLOCK_SIZE(rows - 1, rows, orig->users) * orig->items;
+	non_zero_entry *tmpbuffer = malloc(sizeof(non_zero_entry) * tmpsize);
+
+	for (int row = 0; row < rows; row++) {
+
+		int entries_read = read_non_zero_entries(fp, tmpbuffer, tmpsize,
+			BLOCK_HIGH(row, rows, orig->users));
+		if (entries_read < 0) {
+			die("Unable to read non-zero entries");
+		}
+
+		/* sort by column to find the frontier of each grid element */
+		qsort(tmpbuffer, entries_read, sizeof(non_zero_entry), col_cmp);
+
+		non_zero_entry *base = tmpbuffer;
+		for (int i = 0, col = 0; i < entries_read; i++) {
+
+			if (col > cols) {
+				die("More columns read than grid width");
+			}
+
+			non_zero_entry *frontier = &tmpbuffer[i];
+
+			int rank;
+			int coords[] = { row, col };
+			MPI_Cart_rank(cart_comm, coords, &rank);
+
+			if (frontier->col > BLOCK_HIGH(col, cols, orig->items) || i == entries_read - 1) {
+
+				/**
+				 * if it is the last entry in the buffer
+				 * need to consider one more value to have correct size
+				 */
+				size_t offset = frontier - base + (i == entries_read - 1);
+
+				/* sort by line before storing or sending */
+				qsort(base, offset, sizeof(non_zero_entry), row_cmp);
+
+				int blk_sz_users = BLOCK_SIZE(row, rows, orig->users);
+				int blk_sz_items = BLOCK_SIZE(col, cols, orig->items);
+
+				dataset_info tmpinfo = (dataset_info) {
+					orig->iters,
+					orig->features,
+					blk_sz_users,
+					blk_sz_items,
+					offset,
+					orig->alpha };
+
+				/* root simply copies the contents to its local structures */
+				if (is_root(rank)) {
+					local->dataset_info = tmpinfo;
+					local->entries = malloc(sizeof(non_zero_entry) * offset);
+					memcpy(local->entries, base, sizeof(non_zero_entry) * offset);
+				} else {
+					MPI_Send(&tmpinfo, 1, dataset_info_type, rank, 0, MPI_COMM_WORLD);
+					MPI_Send(base, offset, non_zero_type, rank, 1, MPI_COMM_WORLD);
+				}
+
+				base = frontier;
+				col++;
+			}
+		}
+	}
+	free(tmpbuffer);
+}
+
+void receive_non_zero_values(
+		input_info *local,
+		MPI_Datatype ds_info_type,
+		MPI_Datatype nz_type,
+		MPI_Status *status)
+{
+	MPI_Recv(&local->dataset_info, 1, ds_info_type, 0, 0, MPI_COMM_WORLD, status);
+	local->entries = malloc(sizeof(non_zero_entry) * local->dataset_info.non_zero_sz);
+	MPI_Recv(local->entries, local->dataset_info.non_zero_sz, nz_type, 0, 1, MPI_COMM_WORLD, status);
+}
+
 int main(int argc, char **argv)
 {
 	if (argc != 2)
@@ -221,16 +351,27 @@ int main(int argc, char **argv)
 
 	MPI_Init(&argc, &argv);
 	MPI_Comm_size(MPI_COMM_WORLD, &nproc);
-	MPI_Comm_rank(MPI_COMM_WORLD, &id);
 
-	printf("rank = %d : init\n", id);
+	MPI_Comm cart_comm;
+	MPI_Comm row_comm;
+	MPI_Comm col_comm;
 
 	MPI_Status status;
-	MPI_Request request;
+
 	MPI_Datatype non_zero_type;
 	MPI_Datatype dataset_info_type;
+
 	create_non_zero_entry(&non_zero_type);
 	create_dataset_info(&dataset_info_type);
+
+	create_cart_comm(&cart_comm, nproc);
+	MPI_Comm_rank(cart_comm, &id);
+	split_comms(cart_comm, &row_comm, &col_comm, id);
+
+	grid_info grid;
+	MPI_Cart_get(cart_comm, 2, &grid.rows, &grid.rows_periodic, &grid.row);
+
+	printf("rank = %-3d : dims %d x %d : coords (%d, %d)\n", id, grid.rows, grid.cols, grid.row, grid.col);
 
 	/* information after decomposition */
 	input_info local;
@@ -239,15 +380,18 @@ int main(int argc, char **argv)
 	 * L and R matrices
 	 * R is always assumed transposed
 	 */
-	mat2d *L;
-	mat2d *R;
+	mat2d *L = 0;
+	mat2d *R = 0;
 
 	/**
-	 * matrix initialization must be done by a well defined order
-	 * first, initialize all L parts, by rank order
-	 * then, initialize all R parts, by rank order
+	 * matrix initialization must follow a well defined order
+	 * in order to converge correctly with a fixed number of iterations
+	 * first, initialize L, by grid line order
+	 * then initialize R, all columns per feature
 	 */
 	mat2d_init_seed();
+
+	MPI_Barrier(cart_comm);
 
 	if (is_root(id)) {
 		/* the original, not partitioned dataset information */
@@ -257,109 +401,25 @@ int main(int argc, char **argv)
 		}
 		print_dataset_info(id, &orig);
 
-		/**
-		 * temporary buffer to store read non-zero entries
-		 * size must be the maximum number of non-zero elements between the lines of a decomposed block
-		 */
-		non_zero_entry *tmpbuffer;
-		int tmpsize;
+		distribute_non_zero_values(fp,
+			cart_comm,
+			non_zero_type,
+			dataset_info_type,
+			grid.rows,
+			grid.cols,
+			&local,
+			&orig);
 
-		tmpsize = BLOCK_SIZE(nproc - 1, nproc, orig.users) * orig.items;
-		tmpbuffer = malloc(sizeof(non_zero_entry) * tmpsize);
-
-		/* init root's non-zery entries */
-		int entries_read = read_non_zero_entries(fp, tmpbuffer, tmpsize,
-			BLOCK_HIGH(id, nproc, orig.users));
-		if (entries_read < 0) {
-			die("Unable to read non-zero entries");
-		}
-
-		local.dataset_info = (dataset_info) { orig.iters, orig.features,
-			BLOCK_SIZE(id, nproc, orig.users), BLOCK_SIZE(id, nproc, orig.items),
-			entries_read, orig.alpha };
-		local.entries = malloc(sizeof(non_zero_entry) * entries_read);
-		memcpy(local.entries, tmpbuffer, sizeof(non_zero_entry) * entries_read);
-
-		/* init root's L matrix */
-		L = mat2d_new(local.dataset_info.users, local.dataset_info.features);
-		mat2d_random_fill(L, local.dataset_info.features);
-
-		mat2d *L_tmp;
-		mat2d *R_tmp;
-
-		int next_id = id + 1;
-		while (next_id < nproc) {
-			entries_read = read_non_zero_entries(fp, tmpbuffer, tmpsize,
-				BLOCK_HIGH(next_id, nproc, orig.users));
-			if (entries_read < 0) {
-				die("Unable to read non-zero entries");
-			}
-			dataset_info tmpinfo = (dataset_info) { orig.iters, orig.features,
-				BLOCK_SIZE(next_id, nproc, orig.users), BLOCK_SIZE(next_id, nproc, orig.items),
-				entries_read, orig.alpha };
-			MPI_Send(&tmpinfo, 1, dataset_info_type, next_id, 0, MPI_COMM_WORLD);
-			MPI_Isend(&tmpbuffer, entries_read, non_zero_type, next_id, 1, MPI_COMM_WORLD, &request);
-
-			L_tmp = mat2d_new(tmpinfo.users, tmpinfo.features);
-			mat2d_random_fill(L_tmp, tmpinfo.features);
-			MPI_Send(mat2d_data(L_tmp), mat2d_size(L_tmp), MPI_DOUBLE, next_id, 2, MPI_COMM_WORLD);
-			mat2d_free(L_tmp);
-			MPI_Wait(&request, &status);
-
-			next_id++;
-		}
-
-		free(tmpbuffer);
 		if (fclose(fp) == EOF)
 			fprintf(stderr, "Unable to close file");
-
-		/* init root's R matrix */
-		mat2d *R_init = mat2d_new(local.dataset_info.features, local.dataset_info.items);
-		R = mat2d_new(local.dataset_info.items, local.dataset_info.features);
-		mat2d_transpose(R_init, R);
-		mat2d_random_fill(R, local.dataset_info.features);
-		mat2d_free(R_init);
-
-		/* Send R matrix blocks */
-		next_id = id + 1;
-		while (next_id < nproc) {
-			R_tmp = mat2d_new(BLOCK_SIZE(next_id, nproc, orig.items), orig.features);
-			mat2d_random_fill(R_tmp, orig.features);
-			MPI_Send(mat2d_data(R_tmp), mat2d_size(R_tmp), MPI_DOUBLE, next_id, 3, MPI_COMM_WORLD);
-			mat2d_free(R_tmp);
-
-			next_id++;
-		}
-	}
-
-	if (!is_root(id)) {
-		MPI_Recv(&local.dataset_info, 1, dataset_info_type, 0, 0, MPI_COMM_WORLD, &status);
+	} else {
+		receive_non_zero_values(&local,
+			dataset_info_type,
+			non_zero_type,
+			&status);
 	}
 
 	print_dataset_info(id, &local.dataset_info);
-
-	if (!is_root(id)) {
-		local.entries = malloc(sizeof(non_zero_entry) * local.dataset_info.non_zero_sz);
-		MPI_Recv(local.entries, local.dataset_info.non_zero_sz, non_zero_type, 0, 1,
-			MPI_COMM_WORLD, &status);
-	}
-
-	printf("rank = %d : received non-zero entries\n", id);
-
-	if (!is_root(id)) {
-		L = mat2d_new(local.dataset_info.users, local.dataset_info.features);
-		MPI_Irecv(mat2d_data(L), mat2d_size(L), MPI_DOUBLE, 0, 2, MPI_COMM_WORLD, &request);
-
-		/* transponse while waiting for reception of L */
-		mat2d *R_init = mat2d_new(local.dataset_info.features, local.dataset_info.items);
-		MPI_Recv(mat2d_data(R_init), mat2d_size(R_init), MPI_DOUBLE, 0, 3, MPI_COMM_WORLD, &status);
-		R = mat2d_new(local.dataset_info.items, local.dataset_info.features);
-		mat2d_transpose(R_init, R);
-		mat2d_free(R_init);
-		MPI_Wait(&request, &status);
-	}
-
-	printf("rank = %d : received & initialized L and R\n", id);
 
 	// matrix_factorization(id, nproc, L->data, R->data, &orig);
 	// print output
