@@ -519,7 +519,7 @@ int main(int argc, char **argv)
 
 	free(local.entries);
 	mat2d_free(L);
-	//mat2d_free(R);
+	mat2d_free(R);
 
 	MPI_Finalize();
 
