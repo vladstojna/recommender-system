@@ -334,25 +334,25 @@ void receive_non_zero_values(
 }
 
 void distribute_matrix_L(MPI_Comm cart_comm, int rows, int users, int features) {
-	if (rows > 1) {
-		double *buffer = malloc(sizeof(double) * BLOCK_SIZE(rows - 1, rows, users) * features);
+	double *buffer = malloc(sizeof(double) * BLOCK_SIZE(rows - 1, rows, users) * features);
 
-		for (int row = 0; row < rows; row++) {
-			int dest_rank;
-			int coords[] = { row, 0 };
-			MPI_Cart_rank(cart_comm, coords, &dest_rank);
+	for (int row = 0; row < rows; row++) {
+		int dest_rank;
+		int coords[] = { row, 0 };
+		MPI_Cart_rank(cart_comm, coords, &dest_rank);
 
-			int buffersz = BLOCK_SIZE(row, rows, users) * features;
+		int buffersz = BLOCK_SIZE(row, rows, users) * features;
 
-			if (is_root(dest_rank)) {
-				for (int j = 0; j < buffersz; j++) {
-					buffer[j] = RAND01 / features;
-				}
-			} else {
-				MPI_Send(buffer, buffersz, MPI_DOUBLE, dest_rank, 2, cart_comm);
+		if (is_root(dest_rank)) {
+			for (int j = 0; j < buffersz; j++) {
+				buffer[j] = RAND01 / features;
 			}
+		} else {
+			MPI_Send(buffer, buffersz, MPI_DOUBLE, dest_rank, 2, cart_comm);
 		}
 	}
+
+	free(buffer);
 }
 
 int main(int argc, char **argv)
@@ -409,8 +409,8 @@ int main(int argc, char **argv)
 	 * L and R matrices
 	 * R is always assumed transposed
 	 */
-	mat2d *L = 0;
-	mat2d *R = 0;
+	mat2d *L;
+	mat2d *R;
 
 	/**
 	 * matrix initialization must follow a well defined order
@@ -450,18 +450,20 @@ int main(int argc, char **argv)
 	printf("rank=%-3d : received non-zero entries\n", rank);
 
 	L = mat2d_new(local.dataset_info.users, local.dataset_info.features);
-	R = mat2d_new(local.dataset_info.items, local.dataset_info.features);
 
 	if (is_root(rank)) {
 		mat2d_random_fill(L, local.dataset_info.features);
-		distribute_matrix_L(cart_comm, grid.rows, orig.users, orig.features);
-	} else if (rank % grid.rows == 0) {
+		if (grid.rows > 1)
+			distribute_matrix_L(cart_comm, grid.rows, orig.users, orig.features);
+	} else if (grid.rows > 1 && rank % grid.rows == 0) {
 		MPI_Recv(mat2d_data(L), mat2d_size(L), MPI_DOUBLE, 0, 2, cart_comm, &status);
 	}
 
 	MPI_Bcast(mat2d_data(L), mat2d_size(L), MPI_DOUBLE, 0, row_comm);
 
 	printf("rank=%-3d : received matrix L block size=%d\n", rank, mat2d_size(L));
+
+	R = mat2d_new(local.dataset_info.items, local.dataset_info.features);
 
 	if (is_root(rank)) {
 		// init & distribute
