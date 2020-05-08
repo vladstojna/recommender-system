@@ -30,6 +30,8 @@ typedef struct
 	int features;
 	int users;
 	int items;
+	int users_init;
+	int items_init;
 	int non_zero_sz;
 	double alpha;
 } dataset_info;
@@ -57,8 +59,10 @@ int row_cmp(const void *a, const void *b) {
 }
 
 void print_dataset_info(int rank, dataset_info *info) {
-	printf("----- Rank=%d Iters=%d Features=%d Users=%d Items=%d Non-zero size=%d Alpha=%f -----\n",
-		rank, info->iters, info->features, info->users, info->items, info->non_zero_sz, info->alpha);
+	printf("----- Rank=%d Iters=%d Features=%d Users=%d(%d) Items=%d(%d) Non-zero size=%d Alpha=%f -----\n",
+		rank, info->iters, info->features,
+		info->users, info->users_init, info->items,
+		info->items_init, info->non_zero_sz, info->alpha);
 }
 
 int create_non_zero_entry(MPI_Datatype *type)
@@ -75,7 +79,7 @@ int create_dataset_info(MPI_Datatype *type)
 {
 	MPI_Datatype types[2] = { MPI_INT, MPI_DOUBLE };
 	MPI_Aint offsets[2] = { offsetof(dataset_info, iters), offsetof(dataset_info, alpha) };
-	int blocklen[2] = { 5, 1 };
+	int blocklen[2] = { 7, 1 };
 
 	MPI_Type_create_struct(2, blocklen, offsets, types, type);
 	return MPI_Type_commit(type);
@@ -144,65 +148,61 @@ void print_output(mat2d *B, non_zero_entry *entries) {
 	}
 }
 
-void matrix_factorization(int id, int p, double *L, double *R, input_info *info) {
-	int iters = info->dataset_info.iters;
-	int features = info->dataset_info.features;
-	int users = info->dataset_info.users;
-	int items = info->dataset_info.items;
-	int nz_size = info->dataset_info.non_zero_sz;
-	double alpha = info->dataset_info.alpha;
+void matrix_factorization(
+		MPI_Comm row_comm,
+		MPI_Comm col_comm,
+		int rank, int nproc,
+		mat2d *L,
+		mat2d *R,
+		const dataset_info *info,
+		const non_zero_entry *entries)
+{
+	int iters = info->iters;
+	int features = info->features;
+	int users = info->users;
+	int items = info->items;
+	int nz_size = info->non_zero_sz;
+	double alpha = info->alpha;
 
-	double *L_zero = malloc(sizeof(double) * users * features);
-	double *R_zero = malloc(sizeof(double) * items * features);
+	int offset_row = BLOCK_LOW(rank, nproc, info->users_init);
+	int offset_col = BLOCK_LOW(rank, nproc, info->items_init);
 
-	int low = BLOCK_LOW(id, p, nz_size);
-	int high = BLOCK_HIGH(id, p, nz_size);
+	mat2d *L_aux = mat2d_new(users, features);
+	mat2d *R_aux = mat2d_new(items, features);
 
 	for (int iter = 0; iter < iters; iter++)
 	{
 		MPI_Barrier(MPI_COMM_WORLD);
-		MPI_Bcast(L, users * features, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-		MPI_Bcast(R, items * features, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-		
-		if (!id) {
-			memcpy(L_zero, L, users * features * sizeof(double));
-			memcpy(R_zero, R, items * features * sizeof(double));
+
+		if (is_root(rank)) {
+			mat2d_copy(L, L_aux);
+			mat2d_copy(R, R_aux);
 		} else {
-			memset(L_zero, 0, users * features * sizeof(double));
-			memset(R_zero, 0, items * features * sizeof(double));
+			mat2d_zero(L_aux);
+			mat2d_zero(R_aux);
 		}
 
-		for (int n = low; n <= high; n++)
+		for (int n = 0; n < nz_size; n++)
 		{
-			int i = info->entries[n].row;
-			int j = info->entries[n].col;
-
-			/************** dot product **************/
-			double *row = &L[i * features];
-			double *col = &R[j * features];
-			double dot = 0;
-
-
-			for (int i = 0; i < features; ++i) {
-				dot += row[i] * col[i];
-			}
-			/*****************************************/
-
-			double value = alpha * 2 * (info->entries[n].value - dot);
+			int i = entries[n].row - offset_row;
+			int j = entries[n].col - offset_col;
+			double value = alpha * 2 * (entries[n].value - mat2d_dot_product(L, i, R, j));
 
 			for (int k = 0; k < features; k++) {
-				L_zero[i * features + k] -= value * (- R[j * features + k]); 
-				R_zero[j * features + k] -= value * (- L[i * features + k]);
+
+				mat2d_set(L_aux, i, k, mat2d_get(L_aux, i, k) - value *
+					(-mat2d_get(R_aux, j, k)));
+				mat2d_set(R_aux, j, k, mat2d_get(R_aux, j, k) - value *
+					(-mat2d_get(L, i, k)));
 			}
 		}
 
-		// MPI_Barrier(MPI_COMM_WORLD);
-		MPI_Reduce(L_zero, L, users * features, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-		MPI_Reduce(R_zero, R, items * features, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+		MPI_Allreduce(mat2d_data(L_aux), mat2d_data(L), mat2d_size(L), MPI_DOUBLE, MPI_SUM, row_comm);
+		MPI_Allreduce(mat2d_data(R_aux), mat2d_data(R), mat2d_size(R), MPI_DOUBLE, MPI_SUM, col_comm);
 	}
 
-	free(L_zero);
-	free(R_zero);
+	mat2d_free(L_aux);
+	mat2d_free(R_aux);
 }
 
 int read_non_zero_entries(FILE *fp, non_zero_entry *buffer, int buffsz, int blk_high) {
@@ -301,6 +301,8 @@ void distribute_non_zero_values(
 					orig->features,
 					blk_sz_users,
 					blk_sz_items,
+					orig->users,
+					orig->items,
 					offset,
 					orig->alpha };
 
@@ -462,6 +464,8 @@ int main(int argc, char **argv)
 		if (read_input_metadata(fp, &orig) != 0) {
 			die("Unable to initialize parameters.");
 		}
+		orig.users_init = orig.users;
+		orig.items_init = orig.items;
 		print_dataset_info(rank, &orig);
 
 		distribute_non_zero_values(fp,
@@ -514,8 +518,7 @@ int main(int argc, char **argv)
 
 	printf("rank=%-3d : received matrix R block size=%d\n", rank, mat2d_size(R));
 
-	// matrix_factorization(rank, nproc, L->data, R->data, &orig);
-	// print output
+	// matrix_factorization(row_comm, col_comm, rank, nproc, L, R, &local.dataset_info, local.entries);
 
 	free(local.entries);
 	mat2d_free(L);
