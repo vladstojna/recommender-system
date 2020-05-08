@@ -258,6 +258,16 @@ void distribute_non_zero_values(
 	int tmpsize = BLOCK_SIZE(rows - 1, rows, orig->users) * orig->items;
 	non_zero_entry *tmpbuffer = malloc(sizeof(non_zero_entry) * tmpsize);
 
+	/**
+	 * if no non-zero entries in grid block, send something back to
+	 * avoid the receiving process staying blocked forever
+	 * save in this array which ranks have been sent to
+	 */
+	int nprocs;
+	MPI_Comm_size(cart_comm, &nprocs);
+	char is_sent[nprocs];
+	memset(is_sent, 0, nprocs);
+
 	for (int row = 0; row < rows; row++) {
 
 		int entries_read = read_non_zero_entries(fp, tmpbuffer, tmpsize,
@@ -276,13 +286,17 @@ void distribute_non_zero_values(
 				die("More columns read than grid width");
 			}
 
-			non_zero_entry *frontier = &tmpbuffer[i];
+			non_zero_entry *frontier;
+			if (i < entries_read - 1)
+				frontier = &tmpbuffer[i + 1];
+			else
+				frontier = &tmpbuffer[i];
 
 			int rank;
 			int coords[] = { row, col };
 			MPI_Cart_rank(cart_comm, coords, &rank);
 
-			if (frontier->col > BLOCK_HIGH(col, cols, orig->items) || i == entries_read - 1) {
+			if (i == entries_read - 1 || frontier->col > BLOCK_HIGH(col, cols, orig->items)) {
 
 				/**
 				 * if it is the last entry in the buffer
@@ -316,12 +330,34 @@ void distribute_non_zero_values(
 					MPI_Send(base, offset, non_zero_type, rank, 1, MPI_COMM_WORLD);
 				}
 
+				is_sent[rank] = 1;
 				base = frontier;
 				col++;
 			}
 		}
 	}
 	free(tmpbuffer);
+
+	/* send some data to ranks which hadn't been sent to yet */
+	dataset_info ds_info_to_send = {
+		.iters = orig->iters,
+		.features = orig->features,
+		.users = 0,
+		.items = 0,
+		.users_init = orig->users,
+		.items_init = orig->items,
+		.non_zero_sz = 0,
+		.alpha = orig->alpha };
+
+	int coords[2];
+	for (int r = 0; r < nprocs; r++) {
+		if (is_sent[r] == 0) {
+			MPI_Cart_coords(cart_comm, r, 2, coords);
+			ds_info_to_send.users = BLOCK_SIZE(coords[0] /*row*/, rows, orig->users);
+			ds_info_to_send.items = BLOCK_SIZE(coords[1] /*col*/, cols, orig->items);
+			MPI_Send(&ds_info_to_send, 1, dataset_info_type, r, 0, MPI_COMM_WORLD);
+		}
+	}
 }
 
 void receive_non_zero_values(
@@ -331,8 +367,12 @@ void receive_non_zero_values(
 		MPI_Status *status)
 {
 	MPI_Recv(&local->dataset_info, 1, ds_info_type, 0, 0, MPI_COMM_WORLD, status);
-	local->entries = malloc(sizeof(non_zero_entry) * local->dataset_info.non_zero_sz);
-	MPI_Recv(local->entries, local->dataset_info.non_zero_sz, nz_type, 0, 1, MPI_COMM_WORLD, status);
+	if (local->dataset_info.non_zero_sz > 0) {
+		local->entries = malloc(sizeof(non_zero_entry) * local->dataset_info.non_zero_sz);
+		MPI_Recv(local->entries, local->dataset_info.non_zero_sz, nz_type, 0, 1, MPI_COMM_WORLD, status);
+	} else {
+		local->entries = NULL;
+	}
 }
 
 void distribute_matrix_L(MPI_Comm cart_comm, int rows, int users, int features) {
@@ -518,7 +558,7 @@ int main(int argc, char **argv)
 
 	printf("rank=%-3d : received matrix R block size=%d\n", rank, mat2d_size(R));
 
-	// matrix_factorization(row_comm, col_comm, L, R, &local.dataset_info, local.entries, &grid);
+	matrix_factorization(row_comm, col_comm, L, R, &local.dataset_info, local.entries, &grid);
 
 	free(local.entries);
 	mat2d_free(L);
