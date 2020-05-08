@@ -151,11 +151,11 @@ void print_output(mat2d *B, non_zero_entry *entries) {
 void matrix_factorization(
 		MPI_Comm row_comm,
 		MPI_Comm col_comm,
-		int rank, int nproc,
 		mat2d *L,
 		mat2d *R,
 		const dataset_info *info,
-		const non_zero_entry *entries)
+		const non_zero_entry *entries,
+		const grid_info *grid)
 {
 	int iters = info->iters;
 	int features = info->features;
@@ -164,8 +164,8 @@ void matrix_factorization(
 	int nz_size = info->non_zero_sz;
 	double alpha = info->alpha;
 
-	int offset_row = BLOCK_LOW(rank, nproc, info->users_init);
-	int offset_col = BLOCK_LOW(rank, nproc, info->items_init);
+	int offset_row = BLOCK_LOW(grid->row, grid->rows, info->users_init);
+	int offset_col = BLOCK_LOW(grid->col, grid->cols, info->items_init);
 
 	mat2d *L_aux = mat2d_new(users, features);
 	mat2d *R_aux = mat2d_new(items, features);
@@ -518,7 +518,7 @@ int main(int argc, char **argv)
 
 	printf("rank=%-3d : received matrix R block size=%d\n", rank, mat2d_size(R));
 
-	// matrix_factorization(row_comm, col_comm, rank, nproc, L, R, &local.dataset_info, local.entries);
+	// matrix_factorization(row_comm, col_comm, L, R, &local.dataset_info, local.entries, &grid);
 
 	free(local.entries);
 	mat2d_free(L);
