@@ -333,6 +333,28 @@ void receive_non_zero_values(
 	MPI_Recv(local->entries, local->dataset_info.non_zero_sz, nz_type, 0, 1, MPI_COMM_WORLD, status);
 }
 
+void distribute_matrix_L(MPI_Comm cart_comm, int rows, int users, int features) {
+	if (rows > 1) {
+		double *buffer = malloc(sizeof(double) * BLOCK_SIZE(rows - 1, rows, users) * features);
+
+		for (int row = 0; row < rows; row++) {
+			int dest_rank;
+			int coords[] = { row, 0 };
+			MPI_Cart_rank(cart_comm, coords, &dest_rank);
+
+			int buffersz = BLOCK_SIZE(row, rows, users) * features;
+
+			if (is_root(dest_rank)) {
+				for (int j = 0; j < buffersz; j++) {
+					buffer[j] = RAND01 / features;
+				}
+			} else {
+				MPI_Send(buffer, buffersz, MPI_DOUBLE, dest_rank, 2, cart_comm);
+			}
+		}
+	}
+}
+
 int main(int argc, char **argv)
 {
 	if (argc != 2)
@@ -347,7 +369,7 @@ int main(int argc, char **argv)
 		die("Could not open file.");
 	}
 
-	int nproc, id;
+	int nproc, rank, row_rank, col_rank;
 
 	MPI_Init(&argc, &argv);
 	MPI_Comm_size(MPI_COMM_WORLD, &nproc);
@@ -365,13 +387,20 @@ int main(int argc, char **argv)
 	create_dataset_info(&dataset_info_type);
 
 	create_cart_comm(&cart_comm, nproc);
-	MPI_Comm_rank(cart_comm, &id);
-	split_comms(cart_comm, &row_comm, &col_comm, id);
+	MPI_Comm_rank(cart_comm, &rank);
+
+	split_comms(cart_comm, &row_comm, &col_comm, rank);
+	MPI_Comm_rank(row_comm, &row_rank);
+	MPI_Comm_rank(col_comm, &col_rank);
 
 	grid_info grid;
 	MPI_Cart_get(cart_comm, 2, &grid.rows, &grid.rows_periodic, &grid.row);
 
-	printf("rank = %-3d : dims %d x %d : coords (%d, %d)\n", id, grid.rows, grid.cols, grid.row, grid.col);
+	printf("rank=%-3d : grid-ranks r=%d c=%d : dims %d x %d : coords (%d, %d)\n",
+		rank, row_rank, col_rank, grid.rows, grid.cols, grid.row, grid.col);
+
+	/* the original, not partitioned dataset information */
+	dataset_info orig;
 
 	/* information after decomposition */
 	input_info local;
@@ -393,13 +422,11 @@ int main(int argc, char **argv)
 
 	MPI_Barrier(cart_comm);
 
-	if (is_root(id)) {
-		/* the original, not partitioned dataset information */
-		dataset_info orig;
+	if (is_root(rank)) {
 		if (read_input_metadata(fp, &orig) != 0) {
 			die("Unable to initialize parameters.");
 		}
-		print_dataset_info(id, &orig);
+		print_dataset_info(rank, &orig);
 
 		distribute_non_zero_values(fp,
 			cart_comm,
@@ -419,9 +446,32 @@ int main(int argc, char **argv)
 			&status);
 	}
 
-	print_dataset_info(id, &local.dataset_info);
+	print_dataset_info(rank, &local.dataset_info);
+	printf("rank=%-3d : received non-zero entries\n", rank);
 
-	// matrix_factorization(id, nproc, L->data, R->data, &orig);
+	L = mat2d_new(local.dataset_info.users, local.dataset_info.features);
+	R = mat2d_new(local.dataset_info.items, local.dataset_info.features);
+
+	if (is_root(rank)) {
+		mat2d_random_fill(L, local.dataset_info.features);
+		distribute_matrix_L(cart_comm, grid.rows, orig.users, orig.features);
+	} else if (rank % grid.rows == 0) {
+		MPI_Recv(mat2d_data(L), mat2d_size(L), MPI_DOUBLE, 0, 2, cart_comm, &status);
+	}
+
+	MPI_Bcast(mat2d_data(L), mat2d_size(L), MPI_DOUBLE, 0, row_comm);
+
+	printf("rank=%-3d : received matrix L block size=%d\n", rank, mat2d_size(L));
+
+	if (is_root(rank)) {
+		// init & distribute
+	} else if (rank < grid.cols) {
+		// receive R & transponse
+	}
+
+	// MPI_Bcast(mat2d_data(R), mat2d_size(R), MPI_DOUBLE, 0, col_comm);
+
+	// matrix_factorization(rank, nproc, L->data, R->data, &orig);
 	// print output
 
 	free(local.entries);
