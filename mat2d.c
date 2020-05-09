@@ -67,6 +67,17 @@ void mat2d_random_fill_LR(mat2d *L, mat2d *R, double norm) {
 			mat2d_set(R, i, j, RAND01 / (double) norm);
 }
 
+void mat2d_init_seed() {
+	srandom(0);
+}
+
+void mat2d_random_fill(mat2d *m, double norm) {
+	int i, j;
+	for (i = 0; i < m->n_r; i++)
+		for (j = 0; j < m->n_c; j++)
+			mat2d_set(m, i, j, RAND01 / (double) norm);
+}
+
 void mat2d_sum(mat2d *res, mat2d *m) {
 	if (mat2d_rows(res) != mat2d_rows(m) || mat2d_cols(res) != mat2d_cols(res))
 		die("Cannot sum matrices.");
