@@ -151,40 +151,32 @@ int read_input_metadata(FILE *fp, dataset_info *info) {
 	return 0;
 }
 
-void compute_output(
-		MPI_Comm cart_comm,
-		MPI_Comm row_comm,
-		MPI_Comm col_comm,
-		MPI_Datatype output_entry_type,
-		MPI_Op reduction_op,
-		const dataset_info *info,
-		const non_zero_entry *entries,
-		const grid_info *grid,
-		mat2d *L,
-		mat2d *R)
+output_entry *compute_reduce_output(
+	MPI_Comm row_comm,
+	MPI_Datatype type,
+	MPI_Op reduction_op,
+	const dataset_info *local,
+	const non_zero_entry *entries,
+	const grid_info *grid,
+	mat2d *L, mat2d *R)
 {
-	output_entry *out;
-	output_entry *red_res;
+	output_entry *red_res = NULL;
 
-	int rank;
 	int row_rank;
-	int col_rank;
-	MPI_Comm_rank(cart_comm, &rank);
 	MPI_Comm_rank(row_comm, &row_rank);
-	MPI_Comm_rank(col_comm, &col_rank);
 
-	int usersz = BLOCK_SIZE(grid->row, grid->rows, info->users_init);
-	int itemsz = BLOCK_SIZE(grid->col, grid->cols, info->items_init);
+	int usersz = local->users;
+	int itemsz = local->items;
 
-	int offset_row = BLOCK_LOW(grid->row, grid->rows, info->users_init);
-	int offset_col = BLOCK_LOW(grid->col, grid->cols, info->items_init);
+	int offset_row = BLOCK_LOW(grid->row, grid->rows, local->users_init);
+	int offset_col = BLOCK_LOW(grid->col, grid->cols, local->items_init);
 
 	if (is_root(row_rank)) {
 		red_res = malloc(sizeof(output_entry) * usersz);
 	}
 
 	/* the array with the partial output */
-	out = malloc(sizeof(output_entry) * usersz);
+	output_entry *out = malloc(sizeof(output_entry) * usersz);
 	/* initialize the max array with a marker */
 	for (int i = 0; i < usersz; i++) {
 		out[i] = (output_entry) { -1, -1 };
@@ -206,46 +198,60 @@ void compute_output(
 		out[i] = max;
 	}
 
-	MPI_Reduce(out, red_res, usersz, output_entry_type, reduction_op, 0, row_comm);
+	MPI_Reduce(out, red_res, usersz, type, reduction_op, 0, row_comm);
 
 	free(out);
 
+	return red_res;
+}
+
+output_entry *gather_output(
+	int rank,
+	MPI_Comm col_comm,
+	MPI_Datatype type,
+	const grid_info *grid,
+	const output_entry *red_res,
+	const dataset_info *local)
+{
 	output_entry *gathered_output = NULL;
 	int *recvcounts = NULL;
 	int *displs = NULL;
 
+	int usersz = local->users;
+	int rows = grid->rows;
+	int cols = grid->cols;
+
 	if (is_root(rank)) {
 		/* the array where the partial outputs will be gathered in */
-		gathered_output = malloc(sizeof(output_entry) * info->users_init);
-		recvcounts = malloc(sizeof(int) * grid->rows);
-		displs = malloc(sizeof(int) * grid->rows);
+		gathered_output = malloc(sizeof(output_entry) * local->users_init);
+		recvcounts = malloc(sizeof(int) * rows);
+		displs = malloc(sizeof(int) * rows);
 		
-		for (int i = 0; i < grid->rows; i++) {
-			displs[i] = BLOCK_LOW(i, grid->rows, info->users_init);
-			recvcounts[i] = BLOCK_SIZE(i, grid->rows, info->users_init);
+		for (int i = 0; i < rows; i++) {
+			displs[i] = BLOCK_LOW(i, rows, local->users_init);
+			recvcounts[i] = BLOCK_SIZE(i, rows, local->users_init);
 		}
 		memcpy(gathered_output, red_res, sizeof(output_entry) * usersz);
 	}
 	
-	if (rank % grid->cols == 0) {
-		MPI_Gatherv(red_res, usersz, output_entry_type, gathered_output, recvcounts, displs, output_entry_type, 0, col_comm);
-	}
-
-	if (is_root(row_rank)) {
-		free(red_res);
+	if (rank % cols == 0) {
+		MPI_Gatherv(red_res, usersz, type, gathered_output, recvcounts, displs, type, 0, col_comm);
 	}
 
 	if (is_root(rank)) {
-		for (int i = 0; i < info->users_init; i++) {
-			output_entry max = gathered_output[i];
-			if (max.index != -1) {
-				printf("%d\n", max.index);
-			}
+		free(recvcounts);
+		free(displs);
+	}
+
+	return gathered_output;
+}
+
+void print_output(output_entry *gathered_out, int size) {
+	for (int i = 0; i < size; i++) {
+		int max = gathered_out[i].index;
+		if (max != -1) {
+			printf("%d\n", max);
 		}
-	}
-
-	if (is_root(rank)) {
-		free(gathered_output);
 	}
 }
 
@@ -667,11 +673,25 @@ int main(int argc, char **argv)
 	MPI_Op reduce_output_op;
 	MPI_Op_create((MPI_User_function *) max_cmp, 1, &reduce_output_op);
 
-	compute_output(cart_comm, row_comm, col_comm, output_entry_type, reduce_output_op, &local.dataset_info, local.entries, &grid, L, R);
+	output_entry *reduction_result = compute_reduce_output(
+		row_comm, output_entry_type, reduce_output_op,
+		&local.dataset_info, local.entries, &grid, L, R);
 
 	free(local.entries);
 	mat2d_free(L);
 	mat2d_free(R);
+
+	output_entry *gathered_output = gather_output(
+		rank, col_comm, output_entry_type,
+		&grid, reduction_result, &local.dataset_info);
+
+	free(reduction_result);
+
+	if (is_root(rank)) {
+		print_output(gathered_output, local.dataset_info.users_init);
+	}
+
+	free(gathered_output);
 
 	MPI_Finalize();
 
