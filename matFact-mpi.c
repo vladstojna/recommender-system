@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <mpi.h>
+#include <unistd.h>
 
 #define BLOCK_LOW(id,p,n) ((id)*(n)/(p))
 #define BLOCK_HIGH(id,p,n) (BLOCK_LOW((id)+1,p,n)-1)
@@ -16,6 +17,12 @@
 			(((p)*((index)+1)-1)/(n))
 
 #define is_root(id) ((id) == 0)
+
+typedef struct
+{
+	int index;
+	double value;
+} output_entry;
 
 typedef struct
 {
@@ -58,6 +65,13 @@ int row_cmp(const void *a, const void *b) {
 	return nz_a->row == nz_b->row ? nz_a->col - nz_b->col : nz_a->row - nz_b->row;
 }
 
+void max_cmp(output_entry *in, output_entry *inout, int *len, MPI_Datatype *type) {
+	int sz = *len;
+	for (int i = 0; i < sz; i++) {
+		inout[i] = (in[i].value > inout[i].value ? in[i] : inout[i]);
+	}
+}
+
 void print_dataset_info(int rank, dataset_info *info) {
 	printf("----- Rank=%d Iters=%d Features=%d Users=%d(%d) Items=%d(%d) Non-zero size=%d Alpha=%f -----\n",
 		rank, info->iters, info->features,
@@ -81,6 +95,15 @@ int create_dataset_info(MPI_Datatype *type)
 	MPI_Aint offsets[2] = { offsetof(dataset_info, iters), offsetof(dataset_info, alpha) };
 	int blocklen[2] = { 7, 1 };
 
+	MPI_Type_create_struct(2, blocklen, offsets, types, type);
+	return MPI_Type_commit(type);
+}
+
+int create_output_entry(MPI_Datatype *type)
+{
+	MPI_Datatype types[2] = { MPI_INT, MPI_DOUBLE };
+	MPI_Aint offsets[2] = { offsetof(output_entry, index), offsetof(output_entry, value) };
+	int blocklen[2] = { 1, 1 };
 	MPI_Type_create_struct(2, blocklen, offsets, types, type);
 	return MPI_Type_commit(type);
 }
@@ -128,23 +151,101 @@ int read_input_metadata(FILE *fp, dataset_info *info) {
 	return 0;
 }
 
-void print_output(mat2d *B, non_zero_entry *entries) {
-	int users = mat2d_rows(B);
-	int items = mat2d_cols(B);
+void compute_output(
+		MPI_Comm cart_comm,
+		MPI_Comm row_comm,
+		MPI_Comm col_comm,
+		MPI_Datatype output_entry_type,
+		MPI_Op reduction_op,
+		const dataset_info *info,
+		const non_zero_entry *entries,
+		const grid_info *grid,
+		mat2d *L,
+		mat2d *R)
+{
+	output_entry *out;
+	output_entry *red_res;
 
-	for (int i = 0, aix = 0; i < users; i++) {
-		int max = -1;
-		for (int j = 0; j < items; j++) {
-			if (!(entries[aix].row == i && entries[aix].col == j)) {
-				if (max == -1 || mat2d_get(B, i, j) > mat2d_get(B, i, max)) {
-					max = j;
+	int rank;
+	int row_rank;
+	int col_rank;
+	MPI_Comm_rank(cart_comm, &rank);
+	MPI_Comm_rank(row_comm, &row_rank);
+	MPI_Comm_rank(col_comm, &col_rank);
+
+	int usersz = BLOCK_SIZE(grid->row, grid->rows, info->users_init);
+	int itemsz = BLOCK_SIZE(grid->col, grid->cols, info->items_init);
+
+	int offset_row = BLOCK_LOW(grid->row, grid->rows, info->users_init);
+	int offset_col = BLOCK_LOW(grid->col, grid->cols, info->items_init);
+
+	if (is_root(row_rank)) {
+		red_res = malloc(sizeof(output_entry) * usersz);
+	}
+
+	/* the array with the partial output */
+	out = malloc(sizeof(output_entry) * usersz);
+	/* initialize the max array with a marker */
+	for (int i = 0; i < usersz; i++) {
+		out[i] = (output_entry) { -1, -1 };
+	}
+
+	for (int i = 0, aix = 0; i < usersz; i++) {
+		output_entry max = { -1, -1 };
+		for (int j = 0; j < itemsz; j++) {
+			if (!(entries[aix].row == offset_row + i && entries[aix].col == offset_col + j)) {
+				double dot = mat2d_dot_product(L, i, R, j);
+				if (dot > max.value) {
+					max.value = dot;
+					max.index = offset_col + j;
 				}
 			} else {
 				aix++;
 			}
 		}
-		if (max != -1)
-			printf("%d\n", max);
+		out[i] = max;
+	}
+
+	MPI_Reduce(out, red_res, usersz, output_entry_type, reduction_op, 0, row_comm);
+
+	free(out);
+
+	output_entry *gathered_output = NULL;
+	int *recvcounts = NULL;
+	int *displs = NULL;
+
+	if (is_root(rank)) {
+		/* the array where the partial outputs will be gathered in */
+		gathered_output = malloc(sizeof(output_entry) * info->users_init);
+		recvcounts = malloc(sizeof(int) * grid->rows);
+		displs = malloc(sizeof(int) * grid->rows);
+		
+		for (int i = 0; i < grid->rows; i++) {
+			displs[i] = BLOCK_SIZE(i, grid->rows, info->users_init);
+			recvcounts[i] = BLOCK_SIZE(i, grid->rows, info->users_init);
+		}
+		memcpy(gathered_output, red_res, sizeof(output_entry) * usersz);
+	}
+	
+	if (rank % grid->cols == 0) {
+		MPI_Gatherv(red_res, usersz, output_entry_type, gathered_output, recvcounts, displs, output_entry_type, 0, col_comm);
+	}
+
+	if (is_root(row_rank)) {
+		free(red_res);
+	}
+
+	if (is_root(rank)) {
+		for (int i = 0; i < info->users_init; i++) {
+			output_entry max = gathered_output[i];
+			if (max.index != -1) {
+				printf("%d\n", max.index);
+			}
+		}
+	}
+
+	if (is_root(rank)) {
+		free(gathered_output);
 	}
 }
 
@@ -559,6 +660,14 @@ int main(int argc, char **argv)
 	printf("rank=%-3d : received matrix R block size=%d\n", rank, mat2d_size(R));
 
 	matrix_factorization(row_comm, col_comm, L, R, &local.dataset_info, local.entries, &grid);
+
+	MPI_Datatype output_entry_type;
+	create_output_entry(&output_entry_type);
+
+	MPI_Op reduce_output_op;
+	MPI_Op_create((MPI_User_function *) max_cmp, 1, &reduce_output_op);
+
+	compute_output(cart_comm, row_comm, col_comm, output_entry_type, reduce_output_op, &local.dataset_info, local.entries, &grid, L, R);
 
 	free(local.entries);
 	mat2d_free(L);
