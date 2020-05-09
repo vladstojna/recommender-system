@@ -2,68 +2,13 @@
 #include "util.h"
 #include "mat2d.h"
 #include "benchmark.h"
+#include "datatypes.h"
+#include "mpiutil.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <mpi.h>
-#include <unistd.h>
-
-#define BLOCK_LOW(id,p,n) ((id)*(n)/(p))
-#define BLOCK_HIGH(id,p,n) (BLOCK_LOW((id)+1,p,n)-1)
-#define BLOCK_SIZE(id,p,n) \
-			(BLOCK_HIGH(id,p,n)-BLOCK_LOW(id,p,n)+1)
-#define BLOCK_OWNER(index,p,n) \
-			(((p)*((index)+1)-1)/(n))
-
-#define is_root(id) ((id) == 0)
-
-typedef struct
-{
-	int index;
-	double value;
-} output_entry;
-
-typedef struct
-{
-	int row;
-	int col;
-	double value;
-} non_zero_entry;
-
-typedef struct
-{
-	int iters;
-	int features;
-	int users;
-	int items;
-	int users_init;
-	int items_init;
-	int non_zero_sz;
-	double alpha;
-} dataset_info;
-
-typedef struct
-{
-	int rows;
-	int cols;
-	int rows_periodic;
-	int cols_periodic;
-	int row;
-	int col;
-} grid_info;
-
-int col_cmp(const void *a, const void *b) {
-	non_zero_entry *nz_a = (non_zero_entry*) a;
-	non_zero_entry *nz_b = (non_zero_entry*) b;
-	return nz_a->col == nz_b->col ? nz_a->row - nz_b->row : nz_a->col - nz_b->col;
-}
-
-int row_cmp(const void *a, const void *b) {
-	non_zero_entry *nz_a = (non_zero_entry*) a;
-	non_zero_entry *nz_b = (non_zero_entry*) b;
-	return nz_a->row == nz_b->row ? nz_a->col - nz_b->col : nz_a->row - nz_b->row;
-}
 
 void max_cmp(output_entry *in, output_entry *inout, int *len, MPI_Datatype *type) {
 	int sz = *len;
@@ -71,64 +16,6 @@ void max_cmp(output_entry *in, output_entry *inout, int *len, MPI_Datatype *type
 		inout[i] = (in[i].value > inout[i].value ? in[i] : inout[i]);
 	}
 }
-
-void print_dataset_info(int rank, dataset_info *info) {
-	printf("----- Rank=%d Iters=%d Features=%d Users=%d(%d) Items=%d(%d) Non-zero size=%d Alpha=%f -----\n",
-		rank, info->iters, info->features,
-		info->users, info->users_init, info->items,
-		info->items_init, info->non_zero_sz, info->alpha);
-}
-
-int create_non_zero_entry(MPI_Datatype *type)
-{
-	MPI_Datatype types[2] = { MPI_INT, MPI_DOUBLE };
-	MPI_Aint offsets[2] = { offsetof(non_zero_entry, row), offsetof(non_zero_entry, value) };
-	int blocklen[2] = { 2, 1 };
-
-	MPI_Type_create_struct(2, blocklen, offsets, types, type);
-	return MPI_Type_commit(type);
-}
-
-int create_dataset_info(MPI_Datatype *type)
-{
-	MPI_Datatype types[2] = { MPI_INT, MPI_DOUBLE };
-	MPI_Aint offsets[2] = { offsetof(dataset_info, iters), offsetof(dataset_info, alpha) };
-	int blocklen[2] = { 7, 1 };
-
-	MPI_Type_create_struct(2, blocklen, offsets, types, type);
-	return MPI_Type_commit(type);
-}
-
-int create_output_entry(MPI_Datatype *type)
-{
-	MPI_Datatype types[2] = { MPI_INT, MPI_DOUBLE };
-	MPI_Aint offsets[2] = { offsetof(output_entry, index), offsetof(output_entry, value) };
-	int blocklen[2] = { 1, 1 };
-	MPI_Type_create_struct(2, blocklen, offsets, types, type);
-	return MPI_Type_commit(type);
-}
-
-void create_cart_comm(MPI_Comm *comm, int nproc)
-{
-	int size[] = { 0, 0 };
-	int periodic[] = { 0, 0 };
-	MPI_Dims_create(nproc, 2, size);
-	MPI_Cart_create(MPI_COMM_WORLD, 2, size, periodic, 1, comm);
-}
-
-void split_comms(MPI_Comm cart_comm, MPI_Comm *row_comm, MPI_Comm *col_comm, int rank)
-{
-	int coords[2];
-	MPI_Cart_coords(cart_comm, rank, 2, coords);
-	MPI_Comm_split(cart_comm, coords[0], coords[1], row_comm);
-	MPI_Comm_split(cart_comm, coords[1], coords[0], col_comm);
-}
-
-typedef struct
-{
-	dataset_info dataset_info;
-	non_zero_entry *entries;
-} input_info;
 
 int read_input_metadata(FILE *fp, dataset_info *info) {
 	if (info == NULL)

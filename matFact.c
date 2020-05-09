@@ -2,18 +2,10 @@
 #include "util.h"
 #include "mat2d.h"
 #include "benchmark.h"
+#include "datatypes.h"
 
 #include <stdio.h>
 #include <stdlib.h>
-
-#define swap(T, a, b) { T tmp = a; a = b; b = tmp; }
-
-typedef struct
-{
-	int row;
-	int col;
-	double value;
-} non_zero_entry;
 
 void print_output(mat2d *B, non_zero_entry *entries) {
 	int users = mat2d_rows(B);
