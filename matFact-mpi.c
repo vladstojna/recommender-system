@@ -221,7 +221,7 @@ void compute_output(
 		displs = malloc(sizeof(int) * grid->rows);
 		
 		for (int i = 0; i < grid->rows; i++) {
-			displs[i] = BLOCK_SIZE(i, grid->rows, info->users_init);
+			displs[i] = BLOCK_LOW(i, grid->rows, info->users_init);
 			recvcounts[i] = BLOCK_SIZE(i, grid->rows, info->users_init);
 		}
 		memcpy(gathered_output, red_res, sizeof(output_entry) * usersz);
