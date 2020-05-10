@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <omp.h>
 #include <mpi.h>
 
 void max_cmp(output_entry *in, output_entry *inout, int *len, MPI_Datatype *type) {
@@ -169,13 +170,19 @@ void matrix_factorization(
 	MPI_Comm_rank(row_comm, &row_rank);
 	MPI_Comm_rank(col_comm, &col_rank);
 
+	#pragma omp parallel
+	{
+
+	int num_threads = omp_get_num_threads();
+	int tid = omp_get_thread_num();
+
 	for (int iter = 0; iter < iters; iter++)
 	{
-		MPI_Barrier(MPI_COMM_WORLD);
+		is_root(col_rank) ? mat2d_copy_parallel(R, R_aux, tid, num_threads) : mat2d_zero(R_aux);
+		is_root(row_rank) ? mat2d_copy_parallel(L, L_aux, tid, num_threads) : mat2d_zero(L_aux);
+		#pragma omp barrier
 
-		is_root(col_rank) ? mat2d_copy(R, R_aux) : mat2d_zero(R_aux);
-		is_root(row_rank) ? mat2d_copy(L, L_aux) : mat2d_zero(L_aux);
-
+		#pragma omp for schedule(static)
 		for (int n = 0; n < nz_size; n++)
 		{
 			int i = entries[n].row - offset_row;
@@ -184,15 +191,27 @@ void matrix_factorization(
 
 			for (int k = 0; k < features; k++) {
 
+				#pragma omp atomic
 				mat2d_set(L_aux, i, k, mat2d_get(L_aux, i, k) - value *
 					(-mat2d_get(R, j, k)));
+
+				#pragma omp atomic
 				mat2d_set(R_aux, j, k, mat2d_get(R_aux, j, k) - value *
 					(-mat2d_get(L, i, k)));
 			}
 		}
 
-		MPI_Allreduce(mat2d_data(L_aux), mat2d_data(L), mat2d_size(L), MPI_DOUBLE, MPI_SUM, row_comm);
-		MPI_Allreduce(mat2d_data(R_aux), mat2d_data(R), mat2d_size(R), MPI_DOUBLE, MPI_SUM, col_comm);
+		#pragma omp single
+		{
+			#pragma omp task
+			MPI_Allreduce(mat2d_data(L_aux), mat2d_data(L), mat2d_size(L), MPI_DOUBLE, MPI_SUM, row_comm);
+
+			#pragma omp task
+			MPI_Allreduce(mat2d_data(R_aux), mat2d_data(R), mat2d_size(R), MPI_DOUBLE, MPI_SUM, col_comm);
+		}
+		#pragma omp taskwait
+	}
+
 	}
 
 	mat2d_free(L_aux);
@@ -441,9 +460,9 @@ int main(int argc, char **argv)
 		die("Could not open file.");
 	}
 
-	int nproc, rank, row_rank, col_rank;
+	int nthread, nproc, rank, row_rank, col_rank;
 
-	MPI_Init(&argc, &argv);
+	MPI_Init_thread(&argc, &argv, MPI_THREAD_SERIALIZED, &nthread);
 	MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 
 	MPI_Comm cart_comm;
