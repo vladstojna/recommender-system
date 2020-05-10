@@ -2,6 +2,7 @@
 #include "util.h"
 #include "mat2d.h"
 #include "benchmark.h"
+#include "datatypes.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,25 +12,6 @@
 #ifndef REDUCTION
 #define REDUCTION 1
 #endif
-
-typedef struct
-{
-	int row;
-	int col;
-	double value;
-} non_zero_entry;
-
-int col_cmp(const void *a, const void *b) {
-	non_zero_entry *nz_a = (non_zero_entry*) a;
-	non_zero_entry *nz_b = (non_zero_entry*) b;
-	return nz_a->col == nz_b->col ? nz_a->row - nz_b->row : nz_a->col - nz_b->col;
-}
-
-int row_cmp(const void *a, const void *b) {
-	non_zero_entry *nz_a = (non_zero_entry*) a;
-	non_zero_entry *nz_b = (non_zero_entry*) b;
-	return nz_a->row == nz_b->row ? nz_a->col - nz_b->col : nz_a->row - nz_b->row;
-}
 
 void print_output(mat2d *B, non_zero_entry *entries) {
 	int users = mat2d_rows(B);
