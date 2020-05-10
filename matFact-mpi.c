@@ -190,14 +190,16 @@ void matrix_factorization(
 			double value = alpha * 2 * (entries[n].value - mat2d_dot_product(L, i, R, j));
 
 			for (int k = 0; k < features; k++) {
+				int l_index = i * features + k;
+				int r_index = j * features + k;
 
 				#pragma omp atomic
-				mat2d_set(L_aux, i, k, mat2d_get(L_aux, i, k) - value *
-					(-mat2d_get(R, j, k)));
+				mat2d_set_index(L_aux, l_index, mat2d_get_index(L_aux, l_index) - value *
+					(-mat2d_get_index(R, r_index)));
 
 				#pragma omp atomic
-				mat2d_set(R_aux, j, k, mat2d_get(R_aux, j, k) - value *
-					(-mat2d_get(L, i, k)));
+				mat2d_set_index(R_aux, r_index, mat2d_get_index(R_aux, r_index) - value *
+					(-mat2d_get_index(L, l_index)));
 			}
 		}
 
