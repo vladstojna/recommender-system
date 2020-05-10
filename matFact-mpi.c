@@ -580,6 +580,10 @@ int main(int argc, char **argv)
 
 	free(gathered_output);
 
+	free_types(&non_zero_type, &dataset_info_type, &output_entry_type);
+	free_comms(&cart_comm, &row_comm, &col_comm);
+	free_ops(&reduce_output_op);
+
 	MPI_Finalize();
 
 	return 0;

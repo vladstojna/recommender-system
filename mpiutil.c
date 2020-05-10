@@ -32,6 +32,12 @@ int create_output_entry(MPI_Datatype *type)
 	return MPI_Type_commit(type);
 }
 
+void free_types(MPI_Datatype *nz, MPI_Datatype *data, MPI_Datatype *out) {
+	MPI_Type_free(nz);
+	MPI_Type_free(data);
+	MPI_Type_free(out);
+}
+
 void create_cart_comm(MPI_Comm *comm, int nproc)
 {
 	int size[] = { 0, 0 };
@@ -46,4 +52,14 @@ void split_comms(MPI_Comm cart_comm, MPI_Comm *row_comm, MPI_Comm *col_comm, int
 	MPI_Cart_coords(cart_comm, rank, 2, coords);
 	MPI_Comm_split(cart_comm, coords[0], coords[1], row_comm);
 	MPI_Comm_split(cart_comm, coords[1], coords[0], col_comm);
+}
+
+void free_comms(MPI_Comm *cart_comm, MPI_Comm *row_comm, MPI_Comm *col_comm) {
+	MPI_Comm_free(cart_comm);
+	MPI_Comm_free(row_comm);
+	MPI_Comm_free(col_comm);
+}
+
+void free_ops(MPI_Op *reduce_op) {
+	MPI_Op_free(reduce_op);
 }
