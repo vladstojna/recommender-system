@@ -41,7 +41,7 @@ void free_types(MPI_Datatype *nz, MPI_Datatype *data, MPI_Datatype *out) {
 void create_cart_comm(MPI_Comm *comm, int nproc)
 {
 	int size[] = { 0, 0 };
-	int periodic[] = { 0, 0 };
+	int periodic[] = { 1, 1 };
 	MPI_Dims_create(nproc, 2, size);
 	MPI_Cart_create(MPI_COMM_WORLD, 2, size, periodic, 1, comm);
 }

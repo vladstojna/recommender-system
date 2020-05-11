@@ -50,6 +50,9 @@ output_entry *compute_reduce_output(
 {
 	output_entry *red_res = NULL;
 
+	int rank;
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
 	int row_rank;
 	MPI_Comm_rank(row_comm, &row_rank);
 
@@ -73,7 +76,7 @@ output_entry *compute_reduce_output(
 	for (int i = 0, aix = 0; i < usersz; i++) {
 		output_entry max = { -1, -1 };
 		for (int j = 0; j < itemsz; j++) {
-			if (!(entries[aix].row == offset_row + i && entries[aix].col == offset_col + j)) {
+			if (local->non_zero_sz == 0 || !(entries[aix].row == offset_row + i && entries[aix].col == offset_col + j)) {
 				double dot = mat2d_dot_product(L, i, R, j);
 				if (dot > max.value) {
 					max.value = dot;
