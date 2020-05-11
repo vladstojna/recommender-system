@@ -464,7 +464,7 @@ int main(int argc, char **argv)
 
 	int nthread, nproc, rank, row_rank, col_rank;
 
-	MPI_Init_thread(&argc, &argv, MPI_THREAD_SERIALIZED, &nthread);
+	MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &nthread);
 	MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 
 	MPI_Comm cart_comm;
