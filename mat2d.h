@@ -36,6 +36,8 @@ void mat2d_random_fill(mat2d *m, double norm);
 #define mat2d_cols(m) m->n_c
 #define mat2d_get(m, r, c) m->data[((r)*m->n_c) + (c)]
 #define mat2d_set(m, r, c, v) m->data[((r)*m->n_c) + (c)] = v
+#define mat2d_get_index(m, i) m->data[i]
+#define mat2d_set_index(m, i, v) m->data[i] = v
 
 #define mat2d_data(m) m->data
 #define mat2d_size(m) (m->n_r * m->n_c)
