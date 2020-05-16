@@ -170,6 +170,7 @@ void matrix_factorization(
 	MPI_Comm_rank(col_comm, &col_rank);
 
 	MPI_Request requests[2];
+	MPI_Status statuses[2];
 
 	for (int iter = 0; iter < iters; iter++)
 	{
@@ -193,12 +194,9 @@ void matrix_factorization(
 			}
 		}
 
-		MPI_Allreduce(mat2d_data(L_aux), mat2d_data(L), mat2d_size(L), MPI_DOUBLE, MPI_SUM, row_comm);
-		MPI_Allreduce(mat2d_data(R_aux), mat2d_data(R), mat2d_size(R), MPI_DOUBLE, MPI_SUM, col_comm);
-
-		// MPI_Iallreduce(mat2d_data(L_aux), mat2d_data(L), mat2d_size(L), MPI_DOUBLE, MPI_SUM, row_comm, &requests[0]);
-		// MPI_Iallreduce(mat2d_data(R_aux), mat2d_data(R), mat2d_size(R), MPI_DOUBLE, MPI_SUM, col_comm, &requests[1]);
-		// MPI_Waitall(2, requests, 0);
+		MPI_Iallreduce(mat2d_data(L_aux), mat2d_data(L), mat2d_size(L), MPI_DOUBLE, MPI_SUM, row_comm, &requests[0]);
+		MPI_Iallreduce(mat2d_data(R_aux), mat2d_data(R), mat2d_size(R), MPI_DOUBLE, MPI_SUM, col_comm, &requests[1]);
+		MPI_Waitall(2, requests, statuses);
 	}
 
 	mat2d_free(L_aux);
