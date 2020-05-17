@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <mpi.h>
-
 #include <unistd.h>
 
 void print_non_zero_entries(int rank, non_zero_entry *entries, int size) {
@@ -271,11 +270,14 @@ void distribute_non_zero_values(
 		const dataset_info *orig,
 		const grid_info *grid)
 {
+
+	int users = orig->users;
+	int items = orig->items;
 	/**
 	 * temporary buffer to store read non-zero entries
 	 * size must be the maximum number of non-zero elements between the lines of a decomposed block
 	 */
-	int tmpsize = orig->items;
+	int tmpsize = items;
 	non_zero_entry *tmpbuffer = malloc(sizeof(non_zero_entry) * tmpsize);
 
 	int grid_cols = grid->cols;
@@ -294,8 +296,6 @@ void distribute_non_zero_values(
 	int order_sent[nprocs];
 	memset(order_sent, 0, nprocs * sizeof(int));
 
-	int users = orig->users;
-
 	int rows_with_entries = 0;
 	for (int row = 0, next_row; row < users && row >= 0; row = next_row, rows_with_entries++) {
 
@@ -304,8 +304,12 @@ void distribute_non_zero_values(
 			die("Unable to read non-zero entries");
 		}
 
+		int grid_row = BLOCK_OWNER(row, grid_rows, users);
+
 		non_zero_entry *base = tmpbuffer;
-		for (int i = 0, grid_col = 0; i < entries_read; i++) {
+		for (int i = 0; i < entries_read; i++) {
+
+			int grid_col = BLOCK_OWNER(tmpbuffer[i].col, grid_cols, items);
 
 			if (grid_col > grid_cols) {
 				die("More columns read than grid width");
@@ -318,7 +322,6 @@ void distribute_non_zero_values(
 				frontier = &tmpbuffer[i];
 
 			int rank;
-			int grid_row = BLOCK_OWNER(row, grid_rows, users);
 			int coords[] = { grid_row, grid_col };
 			MPI_Cart_rank(cart_comm, coords, &rank);
 
@@ -367,7 +370,6 @@ void distribute_non_zero_values(
 
 				order_sent[rank]++;
 				base = frontier;
-				grid_col++;
 			}
 		}
 	}
@@ -600,7 +602,6 @@ int main(int argc, char **argv)
 
 	print_dataset_info(rank, &local.dataset_info);
 	printf("rank=%-3d : received non-zero entries\n", rank);
-	print_non_zero_entries(rank, local.entries, local.dataset_info.non_zero_sz);
 
 	L = mat2d_new(local.dataset_info.users, local.dataset_info.features);
 
