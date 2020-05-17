@@ -10,7 +10,7 @@
 #include <string.h>
 #include <mpi.h>
 
-void max_cmp(output_entry *in, output_entry *inout, int *len, MPI_Datatype *type) {
+void max_cmp(output_entry *in, output_entry *inout, int *len, __attribute__((unused)) MPI_Datatype *type) {
 	int sz = *len;
 	for (int i = 0; i < sz; i++) {
 		inout[i] = (in[i].value > inout[i].value ? in[i] : inout[i]);
@@ -113,14 +113,14 @@ output_entry *gather_output(
 		gathered_output = malloc(sizeof(output_entry) * local->users_init);
 		recvcounts = malloc(sizeof(int) * rows);
 		displs = malloc(sizeof(int) * rows);
-		
+
 		for (int i = 0; i < rows; i++) {
 			displs[i] = BLOCK_LOW(i, rows, local->users_init);
 			recvcounts[i] = BLOCK_SIZE(i, rows, local->users_init);
 		}
 		memcpy(gathered_output, red_res, sizeof(output_entry) * usersz);
 	}
-	
+
 	if (rank % cols == 0) {
 		MPI_Gatherv(red_res, usersz, type, gathered_output, recvcounts, displs, type, 0, col_comm);
 	}
