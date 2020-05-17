@@ -203,7 +203,17 @@ void matrix_factorization(
 	mat2d_free(R_aux);
 }
 
-int read_non_zero_entries(FILE *fp, non_zero_entry *buffer, int buffsz, int blk_high) {
+/**
+ * Read non-zero entries to file according to some restrictions
+ * returns -1 if error otherwise returns number of entries read
+ */
+int read_non_zero_entries(
+	FILE *fp, /* file from where to read next entries */
+	non_zero_entry *buffer, /* buffer where to write read non-zero entries */
+	int buffsz, /* max number of entries read */
+	int blk_high, /*up to which row to read */
+	int *__next_row /* the next row in the file, before rewinding */)
+{
 	int entries_read = 0;
 	int row = 0;
 	int column;
@@ -222,6 +232,7 @@ int read_non_zero_entries(FILE *fp, non_zero_entry *buffer, int buffsz, int blk_
 
 		int elems_read = fscanf(fp, "%d %d %lf", &row, &column, &value);
 		if (elems_read == EOF) {
+			*__next_row = -1;
 			return entries_read;
 		}
 		if (elems_read != 3) {
@@ -231,6 +242,7 @@ int read_non_zero_entries(FILE *fp, non_zero_entry *buffer, int buffsz, int blk_
 		/* rewind read line when row exceeds HIGH value */
 		if (row > blk_high) {
 			fseek(fp, ftell_before - ftell(fp), SEEK_CUR);
+			*__next_row = row;
 			return entries_read;
 		}
 
@@ -244,17 +256,22 @@ void distribute_non_zero_values(
 		MPI_Comm cart_comm,
 		MPI_Datatype non_zero_type,
 		MPI_Datatype dataset_info_type,
-		int rows,
-		int cols,
 		input_info *local,
-		const dataset_info *orig)
+		const dataset_info *orig,
+		const grid_info *grid)
 {
 	/**
 	 * temporary buffer to store read non-zero entries
 	 * size must be the maximum number of non-zero elements between the lines of a decomposed block
 	 */
-	int tmpsize = BLOCK_SIZE(rows - 1, rows, orig->users) * orig->items;
+	int tmpsize = orig->items;
 	non_zero_entry *tmpbuffer = malloc(sizeof(non_zero_entry) * tmpsize);
+
+	int grid_cols = grid->cols;
+	int grid_rows = grid->rows;
+
+	/* temporary non-zery entry array the root will accumulate read values into */
+	non_zero_entry *tmp_nz_entries = NULL;
 
 	/**
 	 * if no non-zero entries in grid block, send something back to
@@ -263,24 +280,23 @@ void distribute_non_zero_values(
 	 */
 	int nprocs;
 	MPI_Comm_size(cart_comm, &nprocs);
-	char is_sent[nprocs];
-	memset(is_sent, 0, nprocs);
+	int order_sent[nprocs];
+	memset(order_sent, 0, nprocs * sizeof(int));
 
-	for (int row = 0; row < rows; row++) {
+	int users = orig->users;
 
-		int entries_read = read_non_zero_entries(fp, tmpbuffer, tmpsize,
-			BLOCK_HIGH(row, rows, orig->users));
+	int rows_with_entries = 0;
+	for (int row = 0, next_row; row < users && row >= 0; row = next_row, rows_with_entries++) {
+
+		int entries_read = read_non_zero_entries(fp, tmpbuffer, tmpsize, row, &next_row);
 		if (entries_read < 0) {
 			die("Unable to read non-zero entries");
 		}
 
-		/* sort by column to find the frontier of each grid element */
-		qsort(tmpbuffer, entries_read, sizeof(non_zero_entry), col_cmp);
-
 		non_zero_entry *base = tmpbuffer;
-		for (int i = 0, col = 0; i < entries_read; i++) {
+		for (int i = 0, grid_col = 0; i < entries_read; i++) {
 
-			if (col > cols) {
+			if (grid_col > grid_cols) {
 				die("More columns read than grid width");
 			}
 
@@ -291,10 +307,11 @@ void distribute_non_zero_values(
 				frontier = &tmpbuffer[i];
 
 			int rank;
-			int coords[] = { row, col };
+			int grid_row = BLOCK_OWNER(row, grid_rows, users);
+			int coords[] = { grid_row, grid_col };
 			MPI_Cart_rank(cart_comm, coords, &rank);
 
-			if (i == entries_read - 1 || frontier->col > BLOCK_HIGH(col, cols, orig->items)) {
+			if (i == entries_read - 1 || frontier->col > BLOCK_HIGH(grid_col, grid_cols, orig->items)) {
 
 				/**
 				 * if it is the last entry in the buffer
@@ -302,35 +319,44 @@ void distribute_non_zero_values(
 				 */
 				size_t offset = frontier - base + (i == entries_read - 1);
 
-				/* sort by line before storing or sending */
-				qsort(base, offset, sizeof(non_zero_entry), row_cmp);
+				/* if first time sending to rank */
+				if (order_sent[rank] == 0) {
 
-				int blk_sz_users = BLOCK_SIZE(row, rows, orig->users);
-				int blk_sz_items = BLOCK_SIZE(col, cols, orig->items);
+					int blk_sz_users = BLOCK_SIZE(grid_row, grid_rows, orig->users);
+					int blk_sz_items = BLOCK_SIZE(grid_col, grid_cols, orig->items);
 
-				dataset_info tmpinfo = (dataset_info) {
-					orig->iters,
-					orig->features,
-					blk_sz_users,
-					blk_sz_items,
-					orig->users,
-					orig->items,
-					offset,
-					orig->alpha };
+					dataset_info tmpinfo = (dataset_info) {
+						orig->iters,
+						orig->features,
+						blk_sz_users,
+						blk_sz_items,
+						orig->users,
+						orig->items,
+						offset,
+						orig->alpha };
 
-				/* root simply copies the contents to its local structures */
-				if (is_root(rank)) {
-					local->dataset_info = tmpinfo;
-					local->entries = malloc(sizeof(non_zero_entry) * offset);
-					memcpy(local->entries, base, sizeof(non_zero_entry) * offset);
+					if (is_root(rank)) {
+						local->dataset_info = tmpinfo;
+						if (tmp_nz_entries == NULL)
+							tmp_nz_entries = malloc(sizeof(non_zero_entry) * blk_sz_users * blk_sz_items);
+						memcpy(tmp_nz_entries, base, sizeof(non_zero_entry) * offset);
+					} else {
+						MPI_Send(&tmpinfo, 1, dataset_info_type, rank, 0, MPI_COMM_WORLD);
+						MPI_Send(base, offset, non_zero_type, rank, 1, MPI_COMM_WORLD);
+					}
+
+				} else if (is_root(rank)) {
+					non_zero_entry *dest = &tmp_nz_entries[local->dataset_info.non_zero_sz];
+					memcpy(dest, base, sizeof(non_zero_entry) * offset);
+					local->dataset_info.non_zero_sz += offset;
 				} else {
-					MPI_Send(&tmpinfo, 1, dataset_info_type, rank, 0, MPI_COMM_WORLD);
+					MPI_Send(&offset, 1, MPI_INT, rank, 0, MPI_COMM_WORLD);
 					MPI_Send(base, offset, non_zero_type, rank, 1, MPI_COMM_WORLD);
 				}
 
-				is_sent[rank] = 1;
+				order_sent[rank]++;
 				base = frontier;
-				col++;
+				grid_col++;
 			}
 		}
 	}
@@ -347,15 +373,32 @@ void distribute_non_zero_values(
 		.non_zero_sz = 0,
 		.alpha = orig->alpha };
 
-	int coords[2];
 	for (int r = 0; r < nprocs; r++) {
-		if (is_sent[r] == 0) {
+
+		if (order_sent[r] == 0) {
+			int coords[2];
 			MPI_Cart_coords(cart_comm, r, 2, coords);
-			ds_info_to_send.users = BLOCK_SIZE(coords[0] /*row*/, rows, orig->users);
-			ds_info_to_send.items = BLOCK_SIZE(coords[1] /*col*/, cols, orig->items);
-			MPI_Send(&ds_info_to_send, 1, dataset_info_type, r, 0, MPI_COMM_WORLD);
+			ds_info_to_send.users = BLOCK_SIZE(coords[0] /*row*/, grid_rows, orig->users);
+			ds_info_to_send.items = BLOCK_SIZE(coords[1] /*col*/, grid_cols, orig->items);
+			if (is_root(r)) {
+				local->dataset_info = ds_info_to_send;
+				local->entries = NULL;
+			} else {
+				MPI_Send(&ds_info_to_send, 1, dataset_info_type, r, 0, MPI_COMM_WORLD);
+			}
+		} else if (order_sent[r] < rows_with_entries) {
+			int marker = 0;
+			MPI_Send(&marker, 1, MPI_INT, r, 0, MPI_COMM_WORLD);
 		}
 	}
+
+	/* trim non-zery entries to size */
+	int non_zero_sz = local->dataset_info.non_zero_sz;
+	if (non_zero_sz > 0) {
+		local->entries = malloc(sizeof(non_zero_entry) * non_zero_sz);
+		memcpy(local->entries, tmp_nz_entries, sizeof(non_zero_entry) * non_zero_sz);
+	}
+	free(tmp_nz_entries);
 }
 
 void receive_non_zero_values(
@@ -364,13 +407,38 @@ void receive_non_zero_values(
 		MPI_Datatype nz_type,
 		MPI_Status *status)
 {
+	/* receive dataset info (first send) */
 	MPI_Recv(&local->dataset_info, 1, ds_info_type, 0, 0, MPI_COMM_WORLD, status);
-	if (local->dataset_info.non_zero_sz > 0) {
-		local->entries = malloc(sizeof(non_zero_entry) * local->dataset_info.non_zero_sz);
-		MPI_Recv(local->entries, local->dataset_info.non_zero_sz, nz_type, 0, 1, MPI_COMM_WORLD, status);
-	} else {
+
+	/* if size is zero it means there are no non-zero entries to receive for this rank, return */
+	int non_zero_size = local->dataset_info.non_zero_sz;
+	if (non_zero_size == 0) {
 		local->entries = NULL;
+		return;
 	}
+
+	int users = local->dataset_info.users_init;
+
+	/* alloc maximum size for non-zero entries */
+	non_zero_entry *tmp_entries = malloc(sizeof(non_zero_entry) * local->dataset_info.users * local->dataset_info.items);
+	non_zero_entry *base = tmp_entries;
+
+	/* this loop may do up to users iterations if all ranks have non-zero entries for each line */
+	for (int i = 0; i < users; i++) {
+		MPI_Recv(base, non_zero_size, nz_type, 0, 1, MPI_COMM_WORLD, status);
+		base += non_zero_size;
+		MPI_Recv(&non_zero_size, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, status);
+		if (non_zero_size == 0)
+			break;
+		local->dataset_info.non_zero_sz += non_zero_size;
+	}
+
+	/* trim non-zery entries to size */
+	non_zero_size = local->dataset_info.non_zero_sz;
+	local->entries = malloc(sizeof(non_zero_entry) * non_zero_size);
+	memcpy(local->entries, tmp_entries, sizeof(non_zero_entry) * non_zero_size);
+	free(tmp_entries);
+
 }
 
 void distribute_matrix_L(MPI_Comm cart_comm, int rows, int users, int features) {
@@ -507,13 +575,8 @@ int main(int argc, char **argv)
 		print_dataset_info(rank, &orig);
 
 		distribute_non_zero_values(fp,
-			cart_comm,
-			non_zero_type,
-			dataset_info_type,
-			grid.rows,
-			grid.cols,
-			&local,
-			&orig);
+			cart_comm, non_zero_type, dataset_info_type,
+			&local, &orig, &grid);
 
 		if (fclose(fp) == EOF)
 			fprintf(stderr, "Unable to close file");
