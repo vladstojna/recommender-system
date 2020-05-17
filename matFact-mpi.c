@@ -10,6 +10,17 @@
 #include <string.h>
 #include <mpi.h>
 
+#include <unistd.h>
+
+void print_non_zero_entries(int rank, non_zero_entry *entries, int size) {
+	sleep(rank);
+	printf("rank = %d : [ ", rank);
+	for (int i = 0; i < size; i++) {
+		printf("(%d, %d) ", entries[i].row, entries[i].col);
+	}
+	printf("]\n");
+}
+
 void max_cmp(output_entry *in, output_entry *inout, int *len, __attribute__((unused)) MPI_Datatype *type) {
 	int sz = *len;
 	for (int i = 0; i < sz; i++) {
@@ -589,6 +600,7 @@ int main(int argc, char **argv)
 
 	print_dataset_info(rank, &local.dataset_info);
 	printf("rank=%-3d : received non-zero entries\n", rank);
+	print_non_zero_entries(rank, local.entries, local.dataset_info.non_zero_sz);
 
 	L = mat2d_new(local.dataset_info.users, local.dataset_info.features);
 
