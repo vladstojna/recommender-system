@@ -528,22 +528,41 @@ int main(int argc, char **argv)
 
 	int nproc, rank, row_rank, col_rank;
 
-	MPI_Init(&argc, &argv);
-	MPI_Comm_size(MPI_COMM_WORLD, &nproc);
-
-	MPI_Comm cart_comm;
-	MPI_Comm row_comm;
-	MPI_Comm col_comm;
-
 	MPI_Status status;
 
 	MPI_Datatype non_zero_type;
 	MPI_Datatype dataset_info_type;
 
+	MPI_Init(&argc, &argv);
+	MPI_Comm_size(MPI_COMM_WORLD, &nproc);
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
 	create_non_zero_entry(&non_zero_type);
 	create_dataset_info(&dataset_info_type);
 
-	create_cart_comm(&cart_comm, nproc);
+	/* the original, not partitioned dataset information */
+	dataset_info orig;
+
+	if (is_root(rank)) {
+		if (read_input_metadata(fp, &orig) != 0) {
+			die("Unable to initialize parameters.");
+		}
+		orig.users_init = orig.users;
+		orig.items_init = orig.items;
+		print_dataset_info(rank, &orig);
+	}
+
+	/* broadcast the original dataset info to know how to balance the grid */
+	MPI_Bcast(&orig, 1, dataset_info_type, 0, MPI_COMM_WORLD);
+	print_dataset_info(rank, &orig);
+
+	MPI_Comm cart_comm;
+	MPI_Comm row_comm;
+	MPI_Comm col_comm;
+
+	int size[] = { 0, 0 };
+	create_balanced_grid(&orig, nproc, size, 2);
+	create_cart_comm(&cart_comm, size, 2);
 	MPI_Comm_rank(cart_comm, &rank);
 
 	split_comms(cart_comm, &row_comm, &col_comm, rank);
@@ -555,9 +574,6 @@ int main(int argc, char **argv)
 
 	printf("rank=%-3d : row-rank=%d col-rank=%d : dims %d x %d : coords (%d, %d)\n",
 		rank, row_rank, col_rank, grid.rows, grid.cols, grid.row, grid.col);
-
-	/* the original, not partitioned dataset information */
-	dataset_info orig;
 
 	/* information after decomposition */
 	input_info local;
@@ -580,13 +596,6 @@ int main(int argc, char **argv)
 	MPI_Barrier(cart_comm);
 
 	if (is_root(rank)) {
-		if (read_input_metadata(fp, &orig) != 0) {
-			die("Unable to initialize parameters.");
-		}
-		orig.users_init = orig.users;
-		orig.items_init = orig.items;
-		print_dataset_info(rank, &orig);
-
 		distribute_non_zero_values(fp,
 			cart_comm, non_zero_type, dataset_info_type,
 			&local, &orig, &grid);

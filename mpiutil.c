@@ -3,6 +3,8 @@
 #include "mpiutil.h"
 #include "datatypes.h"
 
+#include <string.h>
+
 int create_non_zero_entry(MPI_Datatype *type)
 {
 	MPI_Datatype types[2] = { MPI_INT, MPI_DOUBLE };
@@ -38,12 +40,22 @@ void free_types(MPI_Datatype *nz, MPI_Datatype *data, MPI_Datatype *out) {
 	MPI_Type_free(out);
 }
 
-void create_cart_comm(MPI_Comm *comm, int nproc)
+void create_balanced_grid(const dataset_info *orig, int nproc, int *size, int dims)
 {
-	int size[] = { 0, 0 };
-	int periodic[] = { 0, 0 };
-	MPI_Dims_create(nproc, 2, size);
-	MPI_Cart_create(MPI_COMM_WORLD, 2, size, periodic, 1, comm);
+	MPI_Dims_create(nproc, dims, size);
+	/* swap grid sizes */
+	if (orig->items > orig->users) {
+		int tmp = size[0];
+		size[0] = size[1];
+		size[1] = tmp;
+	}
+}
+
+void create_cart_comm(MPI_Comm *comm, int *size, int dims)
+{
+	int periodic[dims];
+	memset(periodic, 0, sizeof(int) * dims);
+	MPI_Cart_create(MPI_COMM_WORLD, dims, size, periodic, 1, comm);
 }
 
 void split_comms(MPI_Comm cart_comm, MPI_Comm *row_comm, MPI_Comm *col_comm, int rank)
