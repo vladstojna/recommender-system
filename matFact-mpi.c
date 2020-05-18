@@ -454,24 +454,26 @@ void receive_non_zero_values(
 
 }
 
-void distribute_matrix_L(MPI_Comm cart_comm, int rows, int users, int features) {
-	double *buffer = malloc(sizeof(double) * BLOCK_SIZE(rows - 1, rows, users) * features);
+void distribute_matrix_L(MPI_Comm cart_comm, int grid_rows, int users, int features) {
+	double *buffer = malloc(sizeof(double) * features);
+	int buffersz = features;
 
-	for (int row = 0; row < rows; row++) {
+	for (int grid_row = 0; grid_row < grid_rows; grid_row++) {
 		int dest_rank;
-		int coords[] = { row, 0 };
+		int coords[] = { grid_row, 0 };
 		MPI_Cart_rank(cart_comm, coords, &dest_rank);
 
 		if (is_root(dest_rank))
 			continue;
 
-		int buffersz = BLOCK_SIZE(row, rows, users) * features;
+		int min_row = BLOCK_LOW(grid_row, grid_rows, users);
+		int max_row = BLOCK_HIGH(grid_row, grid_rows, users);
 
-		for (int j = 0; j < buffersz; j++) {
-			buffer[j] = RAND01 / features;
-		}
-
-		MPI_Send(buffer, buffersz, MPI_DOUBLE, dest_rank, 2, cart_comm);
+		for (int row = min_row; row < max_row; row++)
+			for (int j = 0; j < buffersz; j++) {
+				buffer[j] = RAND01 / features;
+			}
+			MPI_Send(buffer, buffersz, MPI_DOUBLE, dest_rank, 2, cart_comm);
 	}
 
 	free(buffer);
