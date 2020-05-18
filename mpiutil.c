@@ -40,27 +40,47 @@ void free_types(MPI_Datatype *nz, MPI_Datatype *data, MPI_Datatype *out) {
 	MPI_Type_free(out);
 }
 
+int smallest_divisor(int n) {
+	if (n % 2 == 0)
+		return 2;
+
+	int div = 3;
+	while (n % div != 0 && div <= n / div)
+		div += 2;
+
+	return div > n / div ? n : div;
+}
+
 void create_balanced_grid(const dataset_info *orig, int nproc, int *size, int dims)
 {
 	int sz[] = { 0, 0 };
-	/* items >> users: do column-wise decomposition */
-	if (orig->items >= nproc * orig->users) {
-		sz[0] = 1;
-		MPI_Dims_create(nproc, dims, sz);
-	/* users >> items: do row-wise decomposition */
-	} else if (orig->users >= nproc * orig->items) {
-		sz[1] = 1;
-		MPI_Dims_create(nproc, dims, sz);
-	/* users ~ items: do normal grid decomposition */
-	} else {
-		MPI_Dims_create(nproc, dims, sz);
-		/* swap grid sizes */
-		if (orig->items > orig->users) {
-			int tmp = sz[0];
-			sz[0] = sz[1];
-			sz[1] = tmp;
+	MPI_Dims_create(nproc, dims, sz);
+
+	int items = orig->items;
+	int users = orig->users;
+
+	int ratio = items >= users ? items / users : users / items;
+	int rows = sz[0];
+	int cols = sz[1];
+
+	if (ratio > 1) {
+		int div = smallest_divisor(cols);
+		int limit = nproc < ratio ? nproc : ratio;
+		while (rows <= limit) {
+			sz[0] = rows;
+			sz[1] = cols;
+			cols /= div;
+			rows *= div;
 		}
 	}
+
+	/* swap grid coordinates */
+	if (items > users) {
+		int tmp = sz[0];
+		sz[0] = sz[1];
+		sz[1] = tmp;
+	}
+
 	size[0] = sz[0];
 	size[1] = sz[1];
 }
