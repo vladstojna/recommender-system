@@ -467,7 +467,6 @@ void distribute_matrix_L(MPI_Comm cart_comm, int grid_rows, int users, int featu
 			continue;
 
 		int rows = BLOCK_SIZE(grid_row, grid_rows, users);
-		printf("Sending %d rows\n", rows);
 
 		for (int row = 0; row < rows; row++) {
 			for (int j = 0; j < buffersz; j++) {
@@ -484,8 +483,6 @@ void receive_matrix_L(MPI_Comm cart_comm, mat2d *L, int grid_row, int grid_rows,
 	double *base = mat2d_data(L);
 
 	int rows = BLOCK_SIZE(grid_row, grid_rows, users);
-
-	printf("Receiving %d rows\n", rows);
 
 	for (int row = 0; row < rows; row++, base += mat2d_cols(L)) {
 		MPI_Recv(base, features, MPI_DOUBLE, 0, 2, cart_comm, status);
