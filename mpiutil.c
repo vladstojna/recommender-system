@@ -60,17 +60,19 @@ void create_balanced_grid(const dataset_info *orig, int nproc, int *size, int di
 	int users = orig->users;
 
 	int ratio = items >= users ? items / users : users / items;
-	int rows = sz[0];
-	int cols = sz[1];
 
 	if (ratio > 1) {
-		int div = smallest_divisor(cols);
+		int rows = sz[0];
+		int cols = sz[1];
 		int limit = nproc < ratio ? nproc : ratio;
-		while (rows <= limit) {
-			sz[0] = rows;
-			sz[1] = cols;
+		while (rows < limit) {
+			int div = smallest_divisor(cols);
 			cols /= div;
 			rows *= div;
+			if (rows > limit)
+				break;
+			sz[0] = rows;
+			sz[1] = cols;
 		}
 	}
 
