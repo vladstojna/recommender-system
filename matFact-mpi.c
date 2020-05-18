@@ -560,7 +560,7 @@ int main(int argc, char **argv)
 	MPI_Comm row_comm;
 	MPI_Comm col_comm;
 
-	int size[] = { 0, 0 };
+	int size[2];
 	create_balanced_grid(&orig, nproc, size, 2);
 	create_cart_comm(&cart_comm, size, 2);
 	MPI_Comm_rank(cart_comm, &rank);

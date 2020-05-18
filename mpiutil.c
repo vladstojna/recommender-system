@@ -42,13 +42,27 @@ void free_types(MPI_Datatype *nz, MPI_Datatype *data, MPI_Datatype *out) {
 
 void create_balanced_grid(const dataset_info *orig, int nproc, int *size, int dims)
 {
-	MPI_Dims_create(nproc, dims, size);
-	/* swap grid sizes */
-	if (orig->items > orig->users) {
-		int tmp = size[0];
-		size[0] = size[1];
-		size[1] = tmp;
+	int sz[] = { 0, 0 };
+	/* items >> users: do column-wise decomposition */
+	if (orig->items >= nproc * orig->users) {
+		sz[0] = 1;
+		MPI_Dims_create(nproc, dims, sz);
+	/* users >> items: do row-wise decomposition */
+	} else if (orig->users >= nproc * orig->items) {
+		sz[1] = 1;
+		MPI_Dims_create(nproc, dims, sz);
+	/* users ~ items: do normal grid decomposition */
+	} else {
+		MPI_Dims_create(nproc, dims, sz);
+		/* swap grid sizes */
+		if (orig->items > orig->users) {
+			int tmp = sz[0];
+			sz[0] = sz[1];
+			sz[1] = tmp;
+		}
 	}
+	size[0] = sz[0];
+	size[1] = sz[1];
 }
 
 void create_cart_comm(MPI_Comm *comm, int *size, int dims)
