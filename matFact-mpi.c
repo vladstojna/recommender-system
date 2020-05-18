@@ -466,17 +466,30 @@ void distribute_matrix_L(MPI_Comm cart_comm, int grid_rows, int users, int featu
 		if (is_root(dest_rank))
 			continue;
 
-		int min_row = BLOCK_LOW(grid_row, grid_rows, users);
-		int max_row = BLOCK_HIGH(grid_row, grid_rows, users);
+		int rows = BLOCK_SIZE(grid_row, grid_rows, users);
+		printf("Sending %d rows\n", rows);
 
-		for (int row = min_row; row < max_row; row++)
+		for (int row = 0; row < rows; row++) {
 			for (int j = 0; j < buffersz; j++) {
 				buffer[j] = RAND01 / features;
 			}
 			MPI_Send(buffer, buffersz, MPI_DOUBLE, dest_rank, 2, cart_comm);
+		}
 	}
 
 	free(buffer);
+}
+
+void receive_matrix_L(MPI_Comm cart_comm, mat2d *L, int grid_row, int grid_rows, int users, int features, MPI_Status *status) {
+	double *base = mat2d_data(L);
+
+	int rows = BLOCK_SIZE(grid_row, grid_rows, users);
+
+	printf("Receiving %d rows\n", rows);
+
+	for (int row = 0; row < rows; row++, base += mat2d_cols(L)) {
+		MPI_Recv(base, features, MPI_DOUBLE, 0, 2, cart_comm, status);
+	}
 }
 
 void init_distribute_matrix_R(MPI_Comm cart_comm, mat2d *R_init, int cols, int items, int features) {
@@ -612,7 +625,7 @@ int main(int argc, char **argv)
 		if (grid.rows > 1)
 			distribute_matrix_L(cart_comm, grid.rows, orig.users, orig.features);
 	} else if (grid.rows > 1 && rank % grid.cols == 0) {
-		MPI_Recv(mat2d_data(L), mat2d_size(L), MPI_DOUBLE, 0, 2, cart_comm, &status);
+		receive_matrix_L(cart_comm, L, grid.row, grid.rows, local.dataset_info.users_init, local.dataset_info.features, &status);
 	}
 
 	MPI_Bcast(mat2d_data(L), mat2d_size(L), MPI_DOUBLE, 0, row_comm);
