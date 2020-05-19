@@ -179,6 +179,12 @@ void matrix_factorization(
 	MPI_Comm_rank(row_comm, &row_rank);
 	MPI_Comm_rank(col_comm, &col_rank);
 
+	/* used to initialize map of accessed rows */
+	int first_time = 0;
+	/* boolean map where the indicates if the row (index) was accessed or not */
+	char *L_distinct_rows = calloc(users, sizeof(char));
+	char *R_distinct_rows = calloc(items, sizeof(char));
+
 	MPI_Request requests[2];
 	MPI_Status statuses[2];
 
@@ -191,22 +197,57 @@ void matrix_factorization(
 		{
 			int i = entries[n].row - offset_row;
 			int j = entries[n].col - offset_col;
+
+			if (first_time) {
+				L_distinct_rows[i] = 1;
+				R_distinct_rows[j] = 1;
+			}
+
 			double value = alpha * 2 * (entries[n].value - mat2d_dot_product(L, i, R, j));
 
-			for (int k = 0; k < features; k++) {
-				int l_index = i * features + k;
-				int r_index = j * features + k;
+			int l_prod = i * features;
+			int r_prod = j * features;
 
-				mat2d_set_index(L_aux, l_index, mat2d_get_index(L_aux, l_index) - value *
-					(-mat2d_get_index(R, r_index)));
-				mat2d_set_index(R_aux, r_index, mat2d_get_index(R_aux, r_index) - value *
-					(-mat2d_get_index(L, l_index)));
+			for (int k = 0; k < features; k++) {
+				int l_ix = l_prod + k;
+				int r_ix = r_prod + k;
+
+				mat2d_set_index(L_aux, l_ix, mat2d_get_index(L_aux, l_ix) - value *
+					(-mat2d_get_index(R, r_ix)));
+				mat2d_set_index(R_aux, r_ix, mat2d_get_index(R_aux, r_ix) - value *
+					(-mat2d_get_index(L, l_ix)));
 			}
 		}
 
-		MPI_Iallreduce(mat2d_data(L_aux), mat2d_data(L), mat2d_size(L), MPI_DOUBLE, MPI_SUM, row_comm, &requests[0]);
-		MPI_Iallreduce(mat2d_data(R_aux), mat2d_data(R), mat2d_size(R), MPI_DOUBLE, MPI_SUM, col_comm, &requests[1]);
-		MPI_Waitall(2, requests, statuses);
+		if (first_time) {
+			first_time = !first_time;
+
+			char *L_tmp_rows = malloc(users * sizeof(char));
+			char *R_tmp_rows = malloc(items * sizeof(char));
+
+			MPI_Iallreduce(L_distinct_rows, L_tmp_rows, users, MPI_CHAR, MPI_LOR, row_comm, &requests[0]);
+			MPI_Iallreduce(R_distinct_rows, R_tmp_rows, items, MPI_CHAR, MPI_LOR, col_comm, &requests[1]);
+			MPI_Waitall(2, requests, statuses);
+
+			char *swap = L_distinct_rows;
+			L_distinct_rows = L_tmp_rows;
+			free(swap);
+			swap = R_distinct_rows;
+			R_distinct_rows = R_tmp_rows;
+			free(swap);
+		}
+
+		for (int i = 0; i < users; i++) {
+			if (L_distinct_rows[i]) {
+				MPI_Allreduce(mat2d_get_line(L_aux, i), mat2d_get_line(L, i), features, MPI_DOUBLE, MPI_SUM, row_comm);
+			}
+		}
+
+		for (int i = 0; i < items; i++) {
+			if (R_distinct_rows[i]) {
+				MPI_Allreduce(mat2d_get_line(R_aux, i), mat2d_get_line(R, i), features, MPI_DOUBLE, MPI_SUM, col_comm);
+			}
+		}
 	}
 
 	mat2d_free(L_aux);
