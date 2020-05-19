@@ -194,9 +194,9 @@ void matrix_factorization(
 
 	for (int iter = 0; iter < iters; iter++)
 	{
-		is_root(col_rank) ? mat2d_copy(R, R_aux, tid, num_threads) : mat2d_zero(R_aux);
-		is_root(row_rank) ? mat2d_copy(L, L_aux, tid, num_threads) : mat2d_zero(L_aux);
-    #pragma omp barrier
+		is_root(col_rank) ? mat2d_copy_parallel(R, R_aux, tid, num_threads) : mat2d_zero(R_aux);
+		is_root(row_rank) ? mat2d_copy_parallel(L, L_aux, tid, num_threads) : mat2d_zero(L_aux);
+    	#pragma omp barrier
 
 		#pragma omp for schedule(static)
 		for (int n = 0; n < nz_size; n++)
@@ -212,7 +212,7 @@ void matrix_factorization(
 				#pragma omp atomic
 				mat2d_set_index(L_aux, l_index, mat2d_get_index(L_aux, l_index) - value *
 					(-mat2d_get_index(R, r_index)));
-        #pragma omp atomic
+        		#pragma omp atomic
 				mat2d_set_index(R_aux, r_index, mat2d_get_index(R_aux, r_index) - value *
 					(-mat2d_get_index(L, l_index)));
 			}
@@ -224,6 +224,8 @@ void matrix_factorization(
 		  MPI_Iallreduce(mat2d_data(R_aux), mat2d_data(R), mat2d_size(R), MPI_DOUBLE, MPI_SUM, col_comm, &requests[1]);
 		  MPI_Waitall(2, requests, statuses);
 		}
+	}
+
 	}
 
 	mat2d_free(L_aux);
@@ -542,14 +544,21 @@ int main(int argc, char **argv)
 		die("Could not open file.");
 	}
 
-	int nthread, nproc, rank, row_rank, col_rank;
+	int nproc, rank, row_rank, col_rank;
 
 	MPI_Status status;
 
 	MPI_Datatype non_zero_type;
 	MPI_Datatype dataset_info_type;
 
-	MPI_Init(&argc, &argv);
+	int provided_level;
+
+	MPI_Init_thread(&argc, &argv, MPI_THREAD_SERIALIZED, &provided_level);
+
+	if (provided_level != MPI_THREAD_SERIALIZED) {
+		die("Unsupported provided level");
+	}
+
 	MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
