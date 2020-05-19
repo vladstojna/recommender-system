@@ -162,7 +162,7 @@ void matrix_factorization(
 		mat2d *L,
 		mat2d *R,
 		const dataset_info *info,
-		const non_zero_entry *entries,
+		non_zero_entry *entries,
 		const grid_info *grid)
 {
 	int iters = info->iters;
@@ -183,11 +183,27 @@ void matrix_factorization(
 	MPI_Comm_rank(row_comm, &row_rank);
 	MPI_Comm_rank(col_comm, &col_rank);
 
+	int reduce_L = (items > users);
+	mat2d **reduction_array;
+
+	if (reduce_L)
+		qsort(entries, nz_size, sizeof(non_zero_entry), col_cmp);
+
 	#pragma omp parallel
 	{
 
 	int num_threads = omp_get_num_threads();
 	int tid = omp_get_thread_num();
+
+	#pragma omp single
+	{
+		reduction_array = malloc(num_threads * sizeof(mat2d*));
+	}
+
+	if (reduce_L)
+		reduction_array[tid] = mat2d_new(users, features);
+	else
+		reduction_array[tid] = mat2d_new(items, features);
 
 	MPI_Request requests[2];
 	MPI_Status statuses[2];
@@ -196,7 +212,11 @@ void matrix_factorization(
 	{
 		is_root(col_rank) ? mat2d_copy_parallel(R, R_aux, tid, num_threads) : mat2d_zero_parallel(R_aux, tid, num_threads);
 		is_root(row_rank) ? mat2d_copy_parallel(L, L_aux, tid, num_threads) : mat2d_zero_parallel(L_aux, tid, num_threads);
+
     	#pragma omp barrier
+
+		mat2d *partial = reduction_array[tid];
+		mat2d_zero(partial);
 
 		#pragma omp for schedule(static)
 		for (int n = 0; n < nz_size; n++)
@@ -209,14 +229,30 @@ void matrix_factorization(
 				int l_index = i * features + k;
 				int r_index = j * features + k;
 
-				#pragma omp atomic
-				mat2d_set_index(L_aux, l_index, mat2d_get_index(L_aux, l_index) - value *
-					(-mat2d_get_index(R, r_index)));
-        		#pragma omp atomic
-				mat2d_set_index(R_aux, r_index, mat2d_get_index(R_aux, r_index) - value *
-					(-mat2d_get_index(L, l_index)));
+				if (reduce_L) {
+					#pragma omp atomic
+					mat2d_set_index(R_aux, r_index, mat2d_get_index(R_aux, r_index) - value *
+						(-mat2d_get_index(L, l_index)));
+
+					mat2d_set_index(partial, l_index, mat2d_get_index(partial, l_index) - value *
+						(-mat2d_get_index(R, r_index)));
+				} else {
+					#pragma omp atomic
+					mat2d_set_index(L_aux, l_index, mat2d_get_index(L_aux, l_index) - value *
+						(-mat2d_get_index(R, r_index)));
+
+					mat2d_set_index(partial, r_index, mat2d_get_index(partial, r_index) - value *
+						(-mat2d_get_index(L, l_index)));
+				}
 			}
 		}
+
+		mat2d *to_reduce = (reduce_L ? L_aux : R_aux);
+		for (int t = 0; t < num_threads; t++) {
+			mat2d_sum(to_reduce, reduction_array[t]);
+		}
+
+		#pragma omp barrier
 
 		#pragma omp single
 		{
@@ -226,7 +262,14 @@ void matrix_factorization(
 		}
 	}
 
+	free(reduction_array[tid]);
+
 	}
+
+	free(reduction_array);
+
+	if (reduce_L)
+		qsort(entries, nz_size, sizeof(non_zero_entry), row_cmp);
 
 	mat2d_free(L_aux);
 	mat2d_free(R_aux);
