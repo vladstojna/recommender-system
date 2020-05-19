@@ -194,8 +194,8 @@ void matrix_factorization(
 
 	for (int iter = 0; iter < iters; iter++)
 	{
-		is_root(col_rank) ? mat2d_copy_parallel(R, R_aux, tid, num_threads) : mat2d_zero(R_aux);
-		is_root(row_rank) ? mat2d_copy_parallel(L, L_aux, tid, num_threads) : mat2d_zero(L_aux);
+		is_root(col_rank) ? mat2d_copy_parallel(R, R_aux, tid, num_threads) : mat2d_zero_parallel(R_aux, tid, num_threads);
+		is_root(row_rank) ? mat2d_copy_parallel(L, L_aux, tid, num_threads) : mat2d_zero_parallel(L_aux, tid, num_threads);
     	#pragma omp barrier
 
 		#pragma omp for schedule(static)

@@ -7,7 +7,7 @@
 
 mat2d* mat2d_new(int rows, int columns) {
 	mat2d *mat = malloc(sizeof(mat2d));
-	
+
 	if (mat) {
 		mat->n_r = rows;
 		mat->n_c = columns;
@@ -43,13 +43,17 @@ void mat2d_zero(mat2d *mat) {
 	memset(mat->data, 0, mat->n_r * mat->n_c * sizeof(double));
 }
 
+void mat2d_zero_parallel(mat2d *mat, int tid, int num_threads) {
+	memset_parallel(mat->data, 0, mat->n_r * mat->n_c, sizeof(double), tid, num_threads);
+}
+
 void mat2d_print(mat2d *mat) {
 	printf("\n");
 
 	for (int i = 0; i < mat->n_r; i++) {
 		for (int j = 0; j < mat->n_c; j++)
 			printf("%f  ", mat2d_get(mat, i, j));
-		
+
 		printf("\n");
 	}
 }
@@ -133,4 +137,3 @@ double mat2d_dot_product(mat2d *left, int r, mat2d *right, int c) {
 	}
 	return result;
 }
-
