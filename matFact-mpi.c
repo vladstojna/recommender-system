@@ -180,7 +180,7 @@ void matrix_factorization(
 	MPI_Comm_rank(col_comm, &col_rank);
 
 	/* used to initialize map of accessed rows */
-	int first_time = 0;
+	int first_time = 1;
 	/* boolean map where the indicates if the row (index) was accessed or not */
 	char *L_distinct_rows = calloc(users, sizeof(char));
 	char *R_distinct_rows = calloc(items, sizeof(char));
