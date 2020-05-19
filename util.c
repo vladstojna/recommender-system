@@ -39,3 +39,10 @@ void memcpy_parallel(void *dest, const void *src, size_t sz, size_t type_sz, int
 		(char*) src + tid * stride * type_sz,
 		type_sz * ((tid + 1) == num_threads ? sz - stride * tid : stride));
 }
+
+void memset_parallel(void *buffer, int value, size_t sz, size_t type_sz, int tid, int num_threads) {
+	size_t stride = sz / num_threads;
+	memset((char*) buffer + tid * stride * type_sz,
+		value,
+		type_sz * ((tid + 1) == num_threads ? sz - stride * tid : stride));
+}
