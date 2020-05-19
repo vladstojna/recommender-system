@@ -296,8 +296,7 @@ void distribute_non_zero_values(
 	int order_sent[nprocs];
 	memset(order_sent, 0, nprocs * sizeof(int));
 
-	int rows_with_entries = 0;
-	for (int row = 0, next_row; row < users && row >= 0; row = next_row, rows_with_entries++) {
+	for (int row = 0, next_row; row < users && row >= 0; row = next_row) {
 
 		int entries_read = read_non_zero_entries(fp, tmpbuffer, tmpsize, row, &next_row);
 		if (entries_read < 0) {
@@ -399,7 +398,7 @@ void distribute_non_zero_values(
 			} else {
 				MPI_Send(&ds_info_to_send, 1, dataset_info_type, r, 0, MPI_COMM_WORLD);
 			}
-		} else if (order_sent[r] < rows_with_entries) {
+		} else if (order_sent[r] != users - 1) {
 			int marker = 0;
 			MPI_Send(&marker, 1, MPI_INT, r, 0, MPI_COMM_WORLD);
 		}
