@@ -162,12 +162,6 @@ void max_frontier(int *frontier, int reduce_L, const non_zero_entry *entries, in
 			*frontier = ++f);
 }
 
-void min_frontier(int *frontier, int reduce_L, const non_zero_entry *entries) {
-	for (int f = *frontier ;
-			f > 0 && (reduce_L ? (entries[f].col == entries[f - 1].col) : (entries[f].row == entries[f - 1].row)) ;
-			*frontier = --f);
-}
-
 void next_frontier(int *frontier, int reduce_L, const non_zero_entry *entries, int nz_size) {
 	for (int f = *frontier ;
 			f < nz_size - 1 && f > 0 && (reduce_L ? (entries[f - 1].col == entries[f].col) : (entries[f - 1].row == entries[f].row)) ;
@@ -204,12 +198,14 @@ void matrix_factorization(
 	MPI_Request requests[2];
 	MPI_Status statuses[2];
 
+	/* array with partial matrices */
 	int reduce_L = (items > users);
 	mat2d **reduction_array;
 
 	if (reduce_L)
 		qsort(entries, nz_size, sizeof(non_zero_entry), col_cmp);
 
+	/* arrays with LOW and HIGH values for each thread */
 	int *nz_lows;
 	int *nz_highs;
 
@@ -237,13 +233,18 @@ void matrix_factorization(
 	#pragma omp barrier
 	#pragma omp single
 	{
-		/* resolve low/high conflicts */
+		/*
+		 * resolve low/high conflicts: maximize index without changing
+		 * row/column for each thread as HIGH value
+		 * if values of adjacent threads conflict,
+		 * find first index of next row/column as LOW value for next thread
+		 */
 		max_frontier(&nz_highs[0], reduce_L, entries, nz_size);
 		for (int i = 1; i < num_threads; i++) {
 			max_frontier(&nz_highs[i], reduce_L, entries, nz_size);
-			non_zero_entry prev_high = entries[nz_highs[i - 1]];
-			non_zero_entry curr_low = entries[nz_lows[i]];
-			if (reduce_L ? prev_high.col == curr_low.col : prev_high.row == curr_low.row) {
+			const non_zero_entry *prev_high = &entries[nz_highs[i - 1]];
+			const non_zero_entry *curr_low = &entries[nz_lows[i]];
+			if (reduce_L ? prev_high->col == curr_low->col : prev_high->row == curr_low->row) {
 				next_frontier(&nz_lows[i], reduce_L, entries, nz_size);
 			}
 		}
@@ -251,8 +252,6 @@ void matrix_factorization(
 
 	int nz_low = nz_lows[tid];
 	int nz_high = nz_highs[tid];
-
-	printf("coords (%d, %d) : tid %d : (%d [%d, %d], %d [%d %d])\n", grid->row, grid->col, tid, nz_low, entries[nz_low].row, entries[nz_low].col, nz_high, entries[nz_high].row, entries[nz_high].col);
 
 	for (int iter = 0; iter < iters; iter++)
 	{
@@ -264,6 +263,7 @@ void matrix_factorization(
 		mat2d *partial = reduction_array[tid];
 		mat2d_zero(partial);
 
+		/* no need for synchronization since each thread has a disjoint slice of non-zery entries */
 		for (int n = nz_low; n <= nz_high; n++)
 		{
 			int i = entries[n].row - offset_row;
