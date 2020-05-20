@@ -506,7 +506,7 @@ void distribute_non_zero_values(
 			} else {
 				MPI_Send(&ds_info_to_send, 1, dataset_info_type, r, 0, MPI_COMM_WORLD);
 			}
-		} else if (order_sent[r] != users - 1) {
+		} else if (order_sent[r] < users) {
 			int marker = 0;
 			MPI_Send(&marker, 1, MPI_INT, r, 0, MPI_COMM_WORLD);
 		}
@@ -543,13 +543,16 @@ void receive_non_zero_values(
 	non_zero_entry *tmp_entries = malloc(sizeof(non_zero_entry) * local->dataset_info.users * local->dataset_info.items);
 	non_zero_entry *base = tmp_entries;
 
-	/* this loop may do up to users iterations if all ranks have non-zero entries for each line */
-	for (int i = 0; i < users; i++) {
-		MPI_Recv(base, non_zero_size, nz_type, 0, 1, MPI_COMM_WORLD, status);
+	/* receive first non-zero entries chunk (second send) */
+	MPI_Recv(base, non_zero_size, nz_type, 0, 1, MPI_COMM_WORLD, status);
+
+	/* this loop may do up to users - 1iterations if all ranks have non-zero entries for each line */
+	for (int i = 0; i < users - 1; i++) {
 		base += non_zero_size;
 		MPI_Recv(&non_zero_size, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, status);
 		if (non_zero_size == 0)
 			break;
+		MPI_Recv(base, non_zero_size, nz_type, 0, 1, MPI_COMM_WORLD, status);
 		local->dataset_info.non_zero_sz += non_zero_size;
 	}
 
