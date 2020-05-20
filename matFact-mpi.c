@@ -235,7 +235,6 @@ void matrix_factorization(
 	nz_highs[tid] = BLOCK_HIGH(tid, num_threads, nz_size);
 
 	#pragma omp barrier
-
 	#pragma omp single
 	{
 		/* resolve low/high conflicts */
@@ -246,8 +245,6 @@ void matrix_factorization(
 			non_zero_entry curr_low = entries[nz_lows[i]];
 			if (reduce_L ? prev_high.col == curr_low.col : prev_high.row == curr_low.row) {
 				next_frontier(&nz_lows[i], reduce_L, entries, nz_size);
-			} else {
-				min_frontier(&nz_lows[i], reduce_L, entries);
 			}
 		}
 	}
@@ -292,6 +289,7 @@ void matrix_factorization(
 				}
 			}
 		}
+		#pragma omp barrier
 
 		mat2d *to_reduce = (reduce_L ? L_aux : R_aux);
 		for (int t = 0; t < num_threads; t++) {
@@ -299,7 +297,6 @@ void matrix_factorization(
 		}
 
 		#pragma omp barrier
-
 		#pragma omp single
 		{
 		  MPI_Iallreduce(mat2d_data(L_aux), mat2d_data(L), mat2d_size(L), MPI_DOUBLE, MPI_SUM, row_comm, &requests[0]);
