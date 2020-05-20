@@ -21,4 +21,7 @@ void parse_non_zero_entry(FILE *fp, int *row, int *col, double *value);
 // Parallelized memcpy
 void memcpy_parallel(void *dest, const void *src, size_t sz, size_t type_sz, int tid, int num_threads);
 
+// Parallelized memset
+void memset_parallel(void *buffer, int value, size_t sz, size_t type_sz, int tid, int num_threads);
+
 #endif

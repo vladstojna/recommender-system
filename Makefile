@@ -19,6 +19,9 @@ omp: matFact-omp.o mat2d.o util.o datatypes.o
 mpi: matFact-mpi.o mat2d.o util.o datatypes.o mpiutil.o
 	$(MPICC) $(CFLAGS) -o $(OUT) matFact-mpi.o mat2d.o util.o datatypes.o mpiutil.o
 
+hybrid: matFact-hybrid.o mat2d.o util.o datatypes.o mpiutil.o
+	$(MPICC) $(CFLAGS) -o $(OUT) matFact-hybrid.o mat2d.o util.o datatypes.o mpiutil.o
+
 matFact.o: matFact.c
 	$(CC) $(CFLAGS) -c matFact.c
 
@@ -27,6 +30,9 @@ matFact-omp.o: matFact-omp.c
 
 matFact-mpi.o: matFact-mpi.c
 	$(MPICC) $(CFLAGS) -c matFact-mpi.c
+
+matFact-hybrid.o: matFact-hybrid.c
+	$(MPICC) $(CFLAGS) -c matFact-hybrid.c
 
 mat2d.o: mat2d.c mat2d.h util.h
 	$(CC) $(CFLAGS) -c mat2d.c
