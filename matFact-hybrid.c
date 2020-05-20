@@ -1,4 +1,4 @@
-// mpi implementation
+// hybrid implementation
 #include "util.h"
 #include "mat2d.h"
 #include "benchmark.h"
@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <omp.h>
 #include <mpi.h>
 #include <unistd.h>
 
@@ -58,6 +59,9 @@ output_entry *compute_reduce_output(
 	mat2d *L, mat2d *R)
 {
 	output_entry *red_res = NULL;
+
+	int rank;
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
 	int row_rank;
 	MPI_Comm_rank(row_comm, &row_rank);
@@ -152,13 +156,25 @@ void print_output(output_entry *gathered_out, int size) {
 	}
 }
 
+void max_frontier(int *frontier, int reduce_L, const non_zero_entry *entries, int nz_size) {
+	for (int f = *frontier ;
+			f < nz_size - 1 && (reduce_L ? (entries[f].col == entries[f + 1].col) : (entries[f].row == entries[f + 1].row)) ;
+			*frontier = ++f);
+}
+
+void next_frontier(int *frontier, int reduce_L, const non_zero_entry *entries, int nz_size) {
+	for (int f = *frontier ;
+			f < nz_size - 1 && f > 0 && (reduce_L ? (entries[f - 1].col == entries[f].col) : (entries[f - 1].row == entries[f].row)) ;
+			*frontier = ++f);
+}
+
 void matrix_factorization(
 		MPI_Comm row_comm,
 		MPI_Comm col_comm,
 		mat2d *L,
 		mat2d *R,
 		const dataset_info *info,
-		const non_zero_entry *entries,
+		non_zero_entry *entries,
 		const grid_info *grid)
 {
 	int iters = info->iters;
@@ -182,12 +198,73 @@ void matrix_factorization(
 	MPI_Request requests[2];
 	MPI_Status statuses[2];
 
+	/* array with partial matrices */
+	int reduce_L = (items > users);
+	mat2d **reduction_array;
+
+	if (reduce_L)
+		qsort(entries, nz_size, sizeof(non_zero_entry), col_cmp);
+
+	/* arrays with LOW and HIGH values for each thread */
+	int *nz_lows;
+	int *nz_highs;
+
+	#pragma omp parallel
+	{
+
+	int num_threads = omp_get_num_threads();
+	int tid = omp_get_thread_num();
+
+	#pragma omp single
+	{
+		nz_lows = malloc(sizeof(int) * num_threads);
+		nz_highs = malloc(sizeof(int) * num_threads);
+		reduction_array = malloc(num_threads * sizeof(mat2d*));
+	}
+
+	if (reduce_L)
+		reduction_array[tid] = mat2d_new(users, features);
+	else
+		reduction_array[tid] = mat2d_new(items, features);
+
+	nz_lows[tid] = BLOCK_LOW(tid, num_threads, nz_size);
+	nz_highs[tid] = BLOCK_HIGH(tid, num_threads, nz_size);
+
+	#pragma omp barrier
+	#pragma omp single
+	{
+		/*
+		 * resolve low/high conflicts: maximize index without changing
+		 * row/column for each thread as HIGH value
+		 * if values of adjacent threads conflict,
+		 * find first index of next row/column as LOW value for next thread
+		 */
+		max_frontier(&nz_highs[0], reduce_L, entries, nz_size);
+		for (int i = 1; i < num_threads; i++) {
+			max_frontier(&nz_highs[i], reduce_L, entries, nz_size);
+			const non_zero_entry *prev_high = &entries[nz_highs[i - 1]];
+			const non_zero_entry *curr_low = &entries[nz_lows[i]];
+			if (reduce_L ? prev_high->col == curr_low->col : prev_high->row == curr_low->row) {
+				next_frontier(&nz_lows[i], reduce_L, entries, nz_size);
+			}
+		}
+	}
+
+	int nz_low = nz_lows[tid];
+	int nz_high = nz_highs[tid];
+
 	for (int iter = 0; iter < iters; iter++)
 	{
-		is_root(col_rank) ? mat2d_copy(R, R_aux) : mat2d_zero(R_aux);
-		is_root(row_rank) ? mat2d_copy(L, L_aux) : mat2d_zero(L_aux);
+		is_root(col_rank) ? mat2d_copy_parallel(R, R_aux, tid, num_threads) : mat2d_zero_parallel(R_aux, tid, num_threads);
+		is_root(row_rank) ? mat2d_copy_parallel(L, L_aux, tid, num_threads) : mat2d_zero_parallel(L_aux, tid, num_threads);
 
-		for (int n = 0; n < nz_size; n++)
+    	#pragma omp barrier
+
+		mat2d *partial = reduction_array[tid];
+		mat2d_zero(partial);
+
+		/* no need for synchronization since each thread has a disjoint slice of non-zery entries */
+		for (int n = nz_low; n <= nz_high; n++)
 		{
 			int i = entries[n].row - offset_row;
 			int j = entries[n].col - offset_col;
@@ -197,17 +274,48 @@ void matrix_factorization(
 				int l_index = i * features + k;
 				int r_index = j * features + k;
 
-				mat2d_set_index(L_aux, l_index, mat2d_get_index(L_aux, l_index) - value *
-					(-mat2d_get_index(R, r_index)));
-				mat2d_set_index(R_aux, r_index, mat2d_get_index(R_aux, r_index) - value *
-					(-mat2d_get_index(L, l_index)));
+				if (reduce_L) {
+					mat2d_set_index(R_aux, r_index, mat2d_get_index(R_aux, r_index) - value *
+						(-mat2d_get_index(L, l_index)));
+
+					mat2d_set_index(partial, l_index, mat2d_get_index(partial, l_index) - value *
+						(-mat2d_get_index(R, r_index)));
+				} else {
+					mat2d_set_index(L_aux, l_index, mat2d_get_index(L_aux, l_index) - value *
+						(-mat2d_get_index(R, r_index)));
+
+					mat2d_set_index(partial, r_index, mat2d_get_index(partial, r_index) - value *
+						(-mat2d_get_index(L, l_index)));
+				}
 			}
 		}
+		#pragma omp barrier
 
-		MPI_Iallreduce(mat2d_data(L_aux), mat2d_data(L), mat2d_size(L), MPI_DOUBLE, MPI_SUM, row_comm, &requests[0]);
-		MPI_Iallreduce(mat2d_data(R_aux), mat2d_data(R), mat2d_size(R), MPI_DOUBLE, MPI_SUM, col_comm, &requests[1]);
-		MPI_Waitall(2, requests, statuses);
+		mat2d *to_reduce = (reduce_L ? L_aux : R_aux);
+		for (int t = 0; t < num_threads; t++) {
+			mat2d_sum(to_reduce, reduction_array[t]);
+		}
+
+		#pragma omp barrier
+		#pragma omp sections
+		{
+			#pragma omp section
+			MPI_Allreduce(mat2d_data(L_aux), mat2d_data(L), mat2d_size(L), MPI_DOUBLE, MPI_SUM, row_comm);
+			#pragma omp section
+			MPI_Allreduce(mat2d_data(R_aux), mat2d_data(R), mat2d_size(R), MPI_DOUBLE, MPI_SUM, col_comm);
+		}
 	}
+
+	free(reduction_array[tid]);
+
+	}
+
+	free(reduction_array);
+	free(nz_lows);
+	free(nz_highs);
+
+	if (reduce_L)
+		qsort(entries, nz_size, sizeof(non_zero_entry), row_cmp);
 
 	mat2d_free(L_aux);
 	mat2d_free(R_aux);
@@ -438,7 +546,7 @@ void receive_non_zero_values(
 	/* receive first non-zero entries chunk (second send) */
 	MPI_Recv(base, non_zero_size, nz_type, 0, 1, MPI_COMM_WORLD, status);
 
-	/* this loop may do up to users - 1 iterations if all ranks have non-zero entries for each line */
+	/* this loop may do up to users - 1iterations if all ranks have non-zero entries for each line */
 	for (int i = 0; i < users - 1; i++) {
 		base += non_zero_size;
 		MPI_Recv(&non_zero_size, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, status);
@@ -535,7 +643,14 @@ int main(int argc, char **argv)
 	MPI_Datatype non_zero_type;
 	MPI_Datatype dataset_info_type;
 
-	MPI_Init(&argc, &argv);
+	int provided_level;
+
+	MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided_level);
+
+	if (provided_level != MPI_THREAD_MULTIPLE) {
+		die("Unsupported provided level");
+	}
+
 	MPI_Comm_size(MPI_COMM_WORLD, &nproc);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
