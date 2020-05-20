@@ -156,6 +156,24 @@ void print_output(output_entry *gathered_out, int size) {
 	}
 }
 
+void max_frontier(int *frontier, int reduce_L, const non_zero_entry *entries, int nz_size) {
+	for (int f = *frontier ;
+			f < nz_size - 1 && (reduce_L ? (entries[f].col == entries[f + 1].col) : (entries[f].row == entries[f + 1].row)) ;
+			*frontier = ++f);
+}
+
+void min_frontier(int *frontier, int reduce_L, const non_zero_entry *entries) {
+	for (int f = *frontier ;
+			f > 0 && (reduce_L ? (entries[f].col == entries[f - 1].col) : (entries[f].row == entries[f - 1].row)) ;
+			*frontier = --f);
+}
+
+void next_frontier(int *frontier, int reduce_L, const non_zero_entry *entries, int nz_size) {
+	for (int f = *frontier ;
+			f < nz_size - 1 && f > 0 && (reduce_L ? (entries[f - 1].col == entries[f].col) : (entries[f - 1].row == entries[f].row)) ;
+			*frontier = ++f);
+}
+
 void matrix_factorization(
 		MPI_Comm row_comm,
 		MPI_Comm col_comm,
@@ -183,11 +201,17 @@ void matrix_factorization(
 	MPI_Comm_rank(row_comm, &row_rank);
 	MPI_Comm_rank(col_comm, &col_rank);
 
+	MPI_Request requests[2];
+	MPI_Status statuses[2];
+
 	int reduce_L = (items > users);
 	mat2d **reduction_array;
 
 	if (reduce_L)
 		qsort(entries, nz_size, sizeof(non_zero_entry), col_cmp);
+
+	int *nz_lows;
+	int *nz_highs;
 
 	#pragma omp parallel
 	{
@@ -197,6 +221,8 @@ void matrix_factorization(
 
 	#pragma omp single
 	{
+		nz_lows = malloc(sizeof(int) * num_threads);
+		nz_highs = malloc(sizeof(int) * num_threads);
 		reduction_array = malloc(num_threads * sizeof(mat2d*));
 	}
 
@@ -205,8 +231,31 @@ void matrix_factorization(
 	else
 		reduction_array[tid] = mat2d_new(items, features);
 
-	MPI_Request requests[2];
-	MPI_Status statuses[2];
+	nz_lows[tid] = BLOCK_LOW(tid, num_threads, nz_size);
+	nz_highs[tid] = BLOCK_HIGH(tid, num_threads, nz_size);
+
+	#pragma omp barrier
+
+	#pragma omp single
+	{
+		/* resolve low/high conflicts */
+		max_frontier(&nz_highs[0], reduce_L, entries, nz_size);
+		for (int i = 1; i < num_threads; i++) {
+			max_frontier(&nz_highs[i], reduce_L, entries, nz_size);
+			non_zero_entry prev_high = entries[nz_highs[i - 1]];
+			non_zero_entry curr_low = entries[nz_lows[i]];
+			if (reduce_L ? prev_high.col == curr_low.col : prev_high.row == curr_low.row) {
+				next_frontier(&nz_lows[i], reduce_L, entries, nz_size);
+			} else {
+				min_frontier(&nz_lows[i], reduce_L, entries);
+			}
+		}
+	}
+
+	int nz_low = nz_lows[tid];
+	int nz_high = nz_highs[tid];
+
+	printf("coords (%d, %d) : tid %d : (%d [%d, %d], %d [%d %d])\n", grid->row, grid->col, tid, nz_low, entries[nz_low].row, entries[nz_low].col, nz_high, entries[nz_high].row, entries[nz_high].col);
 
 	for (int iter = 0; iter < iters; iter++)
 	{
@@ -218,8 +267,7 @@ void matrix_factorization(
 		mat2d *partial = reduction_array[tid];
 		mat2d_zero(partial);
 
-		#pragma omp for schedule(static)
-		for (int n = 0; n < nz_size; n++)
+		for (int n = nz_low; n <= nz_high; n++)
 		{
 			int i = entries[n].row - offset_row;
 			int j = entries[n].col - offset_col;
@@ -230,14 +278,12 @@ void matrix_factorization(
 				int r_index = j * features + k;
 
 				if (reduce_L) {
-					#pragma omp atomic
 					mat2d_set_index(R_aux, r_index, mat2d_get_index(R_aux, r_index) - value *
 						(-mat2d_get_index(L, l_index)));
 
 					mat2d_set_index(partial, l_index, mat2d_get_index(partial, l_index) - value *
 						(-mat2d_get_index(R, r_index)));
 				} else {
-					#pragma omp atomic
 					mat2d_set_index(L_aux, l_index, mat2d_get_index(L_aux, l_index) - value *
 						(-mat2d_get_index(R, r_index)));
 
@@ -267,6 +313,8 @@ void matrix_factorization(
 	}
 
 	free(reduction_array);
+	free(nz_lows);
+	free(nz_highs);
 
 	if (reduce_L)
 		qsort(entries, nz_size, sizeof(non_zero_entry), row_cmp);
