@@ -297,11 +297,12 @@ void matrix_factorization(
 		}
 
 		#pragma omp barrier
-		#pragma omp single
+		#pragma omp sections
 		{
-		  MPI_Iallreduce(mat2d_data(L_aux), mat2d_data(L), mat2d_size(L), MPI_DOUBLE, MPI_SUM, row_comm, &requests[0]);
-		  MPI_Iallreduce(mat2d_data(R_aux), mat2d_data(R), mat2d_size(R), MPI_DOUBLE, MPI_SUM, col_comm, &requests[1]);
-		  MPI_Waitall(2, requests, statuses);
+			#pragma omp section
+			MPI_Allreduce(mat2d_data(L_aux), mat2d_data(L), mat2d_size(L), MPI_DOUBLE, MPI_SUM, row_comm);
+			#pragma omp section
+			MPI_Allreduce(mat2d_data(R_aux), mat2d_data(R), mat2d_size(R), MPI_DOUBLE, MPI_SUM, col_comm);
 		}
 	}
 
@@ -641,9 +642,9 @@ int main(int argc, char **argv)
 
 	int provided_level;
 
-	MPI_Init_thread(&argc, &argv, MPI_THREAD_SERIALIZED, &provided_level);
+	MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided_level);
 
-	if (provided_level != MPI_THREAD_SERIALIZED) {
+	if (provided_level != MPI_THREAD_MULTIPLE) {
 		die("Unsupported provided level");
 	}
 
