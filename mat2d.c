@@ -39,6 +39,10 @@ void mat2d_copy_parallel(mat2d *from, mat2d *to, int tid, int num_threads) {
 	memcpy_parallel(to->data, from->data, to->n_r * to->n_c, sizeof(double), tid, num_threads);
 }
 
+void mat2d_copy_line(mat2d *from, int l1, mat2d *to, int l2) {
+	memcpy(mat2d_get_line(to, l2), mat2d_get_line(from, l1), sizeof(double) * to->n_c);
+}
+
 void mat2d_zero(mat2d *mat) {
 	memset(mat->data, 0, mat->n_r * mat->n_c * sizeof(double));
 }

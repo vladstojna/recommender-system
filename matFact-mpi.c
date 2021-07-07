@@ -171,44 +171,123 @@ void matrix_factorization(
 	int offset_row = BLOCK_LOW(grid->row, grid->rows, info->users_init);
 	int offset_col = BLOCK_LOW(grid->col, grid->cols, info->items_init);
 
-	mat2d *L_aux = mat2d_new(users, features);
-	mat2d *R_aux = mat2d_new(items, features);
-
 	int row_rank;
 	int col_rank;
 	MPI_Comm_rank(row_comm, &row_rank);
 	MPI_Comm_rank(col_comm, &col_rank);
 
+	/* boolean map where the indicates if the row (index) was accessed or not */
+	char *L_distinct_rows = calloc(users, sizeof(char));
+	char *R_distinct_rows = calloc(items, sizeof(char));
+
+	/* set entries in boolean map */
+	for (int n = 0; n < nz_size; n++) {
+		int i = entries[n].row - offset_row;
+		int j = entries[n].col - offset_col;
+
+		L_distinct_rows[i] = 1;
+		R_distinct_rows[j] = 1;
+	}
+
+	/* reduce boolean maps */
 	MPI_Request requests[2];
 	MPI_Status statuses[2];
 
+	char *L_tmp_rows = malloc(users * sizeof(char));
+	char *R_tmp_rows = malloc(items * sizeof(char));
+
+	MPI_Iallreduce(L_distinct_rows, L_tmp_rows, users, MPI_CHAR, MPI_LOR, row_comm, &requests[0]);
+	MPI_Iallreduce(R_distinct_rows, R_tmp_rows, items, MPI_CHAR, MPI_LOR, col_comm, &requests[1]);
+	MPI_Waitall(2, requests, statuses);
+
+	char *swap = L_distinct_rows;
+	L_distinct_rows = L_tmp_rows;
+	free(swap);
+	swap = R_distinct_rows;
+	R_distinct_rows = R_tmp_rows;
+	free(swap);
+
+	/* create indexing maps and count number of distinct entries */
+	int *L_map = malloc(users * sizeof(int));
+	int L_distinct_count = 0;
+	int *R_map = malloc(items * sizeof(int));
+	int R_distinct_count = 0;
+
+	for (int i = 0; i < users; i++) {
+		if (L_tmp_rows[i]) {
+			L_map[i] = L_distinct_count;
+			L_distinct_count++;
+		} else L_map[i] = -1;
+	}
+
+	for (int j = 0; j < items; j++) {
+		if (R_tmp_rows[j]) {
+			R_map[j] = R_distinct_count;
+			R_distinct_count++;
+		} else R_map[j] = -1;
+	}
+
+	free(L_distinct_rows);
+	free(R_distinct_rows);
+
+	mat2d *L_aux = mat2d_new(L_distinct_count, features);
+	mat2d *R_aux = mat2d_new(R_distinct_count, features);
+	mat2d *L_aux_copy = mat2d_new(L_distinct_count, features);
+	mat2d *R_aux_copy = mat2d_new(R_distinct_count, features);
+
+	for (int i = 0; i < users; i++) {
+		if (L_map[i] != -1)
+			mat2d_copy_line(L, i, L_aux, L_map[i]);
+	}
+
+	for (int j = 0; j < items; j++) {
+		if (R_map[j] != -1)
+			mat2d_copy_line(R, j, R_aux, R_map[j]);
+	}
+
 	for (int iter = 0; iter < iters; iter++)
 	{
-		is_root(col_rank) ? mat2d_copy(R, R_aux) : mat2d_zero(R_aux);
-		is_root(row_rank) ? mat2d_copy(L, L_aux) : mat2d_zero(L_aux);
+		is_root(row_rank) ? mat2d_copy(L_aux, L_aux_copy) : mat2d_zero(L_aux_copy);
+		is_root(col_rank) ? mat2d_copy(R_aux, R_aux_copy) : mat2d_zero(R_aux_copy);
 
 		for (int n = 0; n < nz_size; n++)
 		{
 			int i = entries[n].row - offset_row;
 			int j = entries[n].col - offset_col;
-			double value = alpha * 2 * (entries[n].value - mat2d_dot_product(L, i, R, j));
+
+			double value = alpha * 2 * (entries[n].value - mat2d_dot_product(L_aux, L_map[i], R_aux, R_map[j]));
+
+			int l_prod = L_map[i] * features;
+			int r_prod = R_map[j] * features;
 
 			for (int k = 0; k < features; k++) {
-				int l_index = i * features + k;
-				int r_index = j * features + k;
+				int l_ix = l_prod + k;
+				int r_ix = r_prod + k;
 
-				mat2d_set_index(L_aux, l_index, mat2d_get_index(L_aux, l_index) - value *
-					(-mat2d_get_index(R, r_index)));
-				mat2d_set_index(R_aux, r_index, mat2d_get_index(R_aux, r_index) - value *
-					(-mat2d_get_index(L, l_index)));
+				mat2d_set_index(L_aux_copy, l_ix, mat2d_get_index(L_aux_copy, l_ix) - value * (-mat2d_get_index(R_aux, r_ix)));
+				mat2d_set_index(R_aux_copy, r_ix, mat2d_get_index(R_aux_copy, r_ix) - value * (-mat2d_get_index(L_aux, l_ix)));
 			}
 		}
 
-		MPI_Iallreduce(mat2d_data(L_aux), mat2d_data(L), mat2d_size(L), MPI_DOUBLE, MPI_SUM, row_comm, &requests[0]);
-		MPI_Iallreduce(mat2d_data(R_aux), mat2d_data(R), mat2d_size(R), MPI_DOUBLE, MPI_SUM, col_comm, &requests[1]);
+		MPI_Iallreduce(mat2d_data(L_aux_copy), mat2d_data(L_aux), mat2d_size(L_aux), MPI_DOUBLE, MPI_SUM, row_comm, &requests[0]);
+		MPI_Iallreduce(mat2d_data(R_aux_copy), mat2d_data(R_aux), mat2d_size(R_aux), MPI_DOUBLE, MPI_SUM, col_comm, &requests[1]);
 		MPI_Waitall(2, requests, statuses);
 	}
 
+	for (int i = 0; i < users; i++) {
+		if (L_map[i] != -1)
+			mat2d_copy_line(L_aux, L_map[i], L, i);
+	}
+
+	for (int j = 0; j < items; j++) {
+		if (R_map[j] != -1)
+			mat2d_copy_line(R_aux, R_map[j], R, j);
+	}
+
+	free(L_map);
+	free(R_map);
+	mat2d_free(L_aux_copy);
+	mat2d_free(R_aux_copy);
 	mat2d_free(L_aux);
 	mat2d_free(R_aux);
 }
